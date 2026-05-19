@@ -99,6 +99,19 @@ body {
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
+.card-disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+  user-select: none;
+}
+.card-disabled .card-title {
+  color: var(--text-dim);
+}
+.card-disabled:hover {
+  border-color: var(--border);
+  transform: none;
+}
 .footer {
   text-align: center; padding: 32px 0 16px;
   color: var(--text-dim); font-size: 12px;
@@ -133,11 +146,11 @@ code {
       <div class="card-desc">Full interactive HTML report with Sobol bar charts, cell cycle heatmaps, and the PCE parameter explorer (client-side JS).</div>
       <div class="card-meta">flagship &middot; interactive</div>
     </a>
-    <a href="report_screens/" class="card">
+    <div class="card card-disabled">
       <div class="card-title">Report Screenshots</div>
       <div class="card-desc">Curated screenshots of the UQ report: parameter table, Sobol bars, heatmap, PCE explorer, provenance.</div>
-      <div class="card-meta">5 captures</div>
-    </a>
+      <div class="card-meta">pending &middot; coming soon</div>
+    </div>
     <a href="architecture/cli_cheatsheet.html" class="card">
       <div class="card-title">CLI Reference</div>
       <div class="card-desc">Complete reference for all 13 <code>uq</code> subcommands with descriptions, options, and usage examples.</div>
@@ -148,21 +161,21 @@ code {
       <div class="card-desc">The full 7-step UQPC workflow diagram: parameter space &rarr; PCE surrogate &rarr; Sobol indices &rarr; cell cycle analysis.</div>
       <div class="card-meta">SVG diagram</div>
     </a>
-    <a href="marimo/" class="card">
+    <div class="card card-disabled">
       <div class="card-title">Marimo Notebooks</div>
       <div class="card-desc">Interactive notebooks exported as WASM — run PCE parameter exploration in your browser, no server needed.</div>
-      <div class="card-meta">WASM &middot; interactive</div>
-    </a>
-    <a href="tui/" class="card">
+      <div class="card-meta">pending &middot; coming soon</div>
+    </div>
+    <div class="card card-disabled">
       <div class="card-title">Terminal UI</div>
       <div class="card-desc">The Textual-based TUI dashboard: parameter rankings, observable selector, live refresh. Installable via <code>pip</code>.</div>
-      <div class="card-meta">TUI &middot; screenshots</div>
-    </a>
-    <a href="cross_condition/" class="card">
+      <div class="card-meta">pending &middot; coming soon</div>
+    </div>
+    <div class="card card-disabled">
       <div class="card-title">Cross-Condition GSA</div>
       <div class="card-desc">Multi-condition sensitivity analysis: rank stability, universal drivers, condition-specific parameter identification.</div>
-      <div class="card-meta">feature explainer</div>
-    </a>
+      <div class="card-meta">pending &middot; coming soon</div>
+    </div>
   </div>
 </div>
 
