@@ -1,5 +1,10 @@
 # uqEcoli
 
+[![Documentation Status](https://readthedocs.org/projects/uqecoli/badge/?version=latest)](https://uqecoli.readthedocs.io/en/latest/)
+[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://vivarium-collective.github.io/uqEcoli/demo/)
+
+> **Canonical repo:** `vivarium-collective/uqEcoli`. The original fork at `AlexPatrie/uqEcoli` is archived (pullable, no further development).
+
 **Uncertainty quantification for the vEcoli whole-cell model.**
 
 `uqEcoli` is a thin glue layer between [vEcoli](https://covertlab.github.io/vEcoli/) and
@@ -26,7 +31,7 @@ Prerequisites:
 3. [`uv`](https://docs.astral.sh/uv/) for environment management.
 
 ```bash
-git clone https://github.com/.../uqEcoli.git
+git clone https://github.com/vivarium-collective/uqEcoli.git
 cd uqEcoli
 uv sync --all-groups --all-extras
 ```
