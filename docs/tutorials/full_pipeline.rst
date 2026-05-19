@@ -1,9 +1,14 @@
 Tutorial: Full RFC006 Pipeline
 ==============================
 
-This tutorial demonstrates the **complete RFC006 UQ pipeline** — from data loading
-through variance decomposition to both Phase 1 (population-level) and Phase 2
-(cell-cycle-stratified) sensitivity analysis.
+.. caution::
+   This tutorial uses the older pipeline API (``XSpaceVecoli``,
+   ``execute_pipeline``, ``PipelineResult``) from ``libuq/``, which has been
+   superseded by the two-stage CLI.  For the current workflow, see
+   :doc:`../getting_started` and :doc:`../cli_reference`.
+
+   Interactive marimo versions of this content are available via
+   ``uv run uq tutorial`` or at ``tutorials/07_full_workflow.py``.
 
 For the interactive Marimo notebook version, see ``tutorials/07_full_workflow.py``.
 

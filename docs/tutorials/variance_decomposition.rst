@@ -1,9 +1,12 @@
 Tutorial: Variance Decomposition
 =================================
 
-This tutorial shows how to decompose simulation variance into components
-attributable to different factors: generation effects, stochastic seeding,
-and intrinsic variability.
+.. caution::
+   This tutorial uses an older API (``Aggregator``, ``compute_variance_decomposition``)
+   that has been replaced by the two-stage ``uq sample`` → ``uq quantify`` CLI.
+   The current CLI automatically decomposes variance as part of the HTML report.
+
+   For the current workflow, see :doc:`../getting_started`.
 
 Overview
 --------

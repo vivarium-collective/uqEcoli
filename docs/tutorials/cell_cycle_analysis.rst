@@ -1,8 +1,12 @@
 Tutorial: Cell Cycle Analysis
 ==============================
 
-This tutorial demonstrates how to analyze simulation outputs across the cell
-cycle using the cell cycle stratification framework.
+.. caution::
+   This tutorial uses the older ``CellCycleAggregator`` framework which has
+   been removed from the public codebase.  The current approach (Strategy 4)
+   uses a simpler growth-stratified θ variable described in :doc:`../cell_cycle`.
+
+   For the current workflow, see :doc:`../cli_reference` and :doc:`../cell_cycle`.
 
 Overview
 --------

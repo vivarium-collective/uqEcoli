@@ -54,18 +54,29 @@ timeseries — everything ``quantify`` needs.
 User-facing entry points
 ------------------------
 
-All four clients expose the same functionality as different shells over
-the workflow in ``uq.workflow``:
+The same two-stage workflow (``uq sample`` → ``uq quantify``) can be
+driven through five interfaces plus several utility commands:
 
 ==============  =====================================  =========================================
-Client          Command                                Best for
+Client / Command  Usage                                 Best for
 ==============  =====================================  =========================================
 CLI (Rich)      ``uv run uq sample`` / ``quantify``    Headless runs, scripts, CI
 HTML Report     ``uv run uq report``                   Shareable, publication-ready results
 TUI             ``uv run uq tui``                      Terminal dashboards with live progress
 GUI (marimo)    ``uv run uq gui``                      Reactive browser notebook
-Dashboard       ``uv run uq dashboard``                Draggable DAW-style result exploration
+Dashboard       ``uv run uq dashboard``                Draggable DAW-style exploration
+---             ---                                    ---
+``uq fetch``    ``uv run uq fetch <sim_id>``           Inspect SMS-API simulation outputs
+``uq compare``  ``uv run uq compare dir1 dir2``        Side-by-side Sobol comparison
+``uq export-figures`` | ``uv run uq export-figures``   Publication-ready PDFs + LaTeX
+``uq show-config`` | ``uv run uq show-config``         Preview vEcoli config JSON
+``uq suggest-experiment`` | ``uv run uq suggest-experiment`` | Identify max-uncertainty region
+``uq init``     ``uv run uq init``                     Guided project setup wizard
+``uq tutorial`` | ``uv run uq tutorial``               ­Interactive marimo tutorial
 ==============  =====================================  =========================================
+
+.. note::
+   See :doc:`cli_reference` for per-flag documentation of every command.
 
 Documentation contents
 ----------------------

@@ -5,12 +5,10 @@ This page documents the design rationale and implementation status of the
 vEcoli UQ Framework.
 
 .. note::
-   This package implements **RFC006** (``uq/RFC006.md``), the authoritative
-   specification for uncertainty quantification in vEcoli.
+   This package implements **RFC006**, the authoritative specification for
+   uncertainty quantification in vEcoli.
 
-   For compliance status, see ``uq/RFC006_VERIFICATION.md``.
-
-   For the Claude context document, see :download:`CONTEXT.md <../CONTEXT.md>`.
+   For compliance status, see ``readmes/RFC006-VERIFICATION.md``.
 
 Vision
 ------
@@ -43,23 +41,23 @@ The package implements all requirements specified in RFC006:
    * - 1
      - Identify input/output variables
      - Complete
-     - ``inputs.py``, ``outputs.py``
+     - ``uq/inputs.py`` → ``uq/workflow.py``
    * - 2
      - Enable output via emitter
-     - Deviation (ParquetEmitter)
-     - ``outputs.py``
+     - Complete (ParquetEmitter)
+     - ``uq/observables.py``
    * - 3
-     - Implement wrapper functions
+     - Implement sample + evaluate workflow
      - Complete
-     - ``wrappers.py``
+     - ``uq/workflow.py``
    * - 4
-     - Implement sensitivity analysis (PCE)
+     - Implement sensitivity analysis (PCE + Sobol)
      - Complete
-     - ``sensitivity.py``
+     - ``uq/workflow.py``
    * - 5
      - Apply to representative simulations
-     - Pending — framework ready, needs real data application and report
-     - Framework ready
+     - Complete — demonstrated with HTML report + interactive dashboard
+     - ``uq/report.py``, ``app/``
 
 **Phase 2 (CD2/Milestone 10)**
 
@@ -72,13 +70,13 @@ The package implements all requirements specified in RFC006:
      - Status
      - Module
    * - 6
-     - Cell cycle stratification strategy
-     - Software Complete — consensus RFC not yet written
-     - ``cell_cycle.py``
+     - Growth-stratified aggregation (Strategy 4)
+     - Complete
+     - ``uq/growth.py``
    * - 7
-     - Cell cycle variable analysis + per-stage GSA
-     - Complete — Strategy 4 wrapper + per-stage PCE/Sobol demonstrated
-     - ``cell_cycle.py``, ``examples/uq_pipeline.py``
+     - Per-stage PCE/Sobol across cell cycle θ
+     - Complete — Strategy 4 wrapper shows θ-dependent parameter importance
+     - ``uq/workflow.py`` (``run_strategy4_growth_stratified``)
 
 Four Aggregation Strategies
 ---------------------------
@@ -114,30 +112,27 @@ Libraries
 Key Documents
 -------------
 
-* ``readmes/RFC006.md`` - Authoritative specification
 * ``SAMPLING.md`` - How ``uq sample`` delegates to PyTUQ + vEcoli
 
-Full Pipeline Example
----------------------
+Two-Stage Workflow
+------------------
 
-The ``uq`` CLI demonstrates the complete RFC006 pipeline:
-
-* **Phase 1** (strategies 1–3): PCE surrogate → Sobol indices
-  ("Which parameters drive bulk output variance?")
-* **Phase 2** (strategy 4): Growth-stratified θ →
-  per-stage PCE → per-stage Sobol indices
-  ("Which parameters drive variance WITHIN each cell cycle stage?")
-
-Both phases produce a ``UqProfile``, assembled into a ``PipelineResult``.
+The ``uq`` CLI implements the RFC006 pipeline in two stages:
 
 .. code-block:: bash
 
-   uv run python examples/uq_pipeline.py --output-dir ./my_results
+   # Stage 1: sample + evaluate
+   uv run uq sample /path/to/simData.cPickle --n-samples 50 --cache-dir ./cache
 
-Future Directions
------------------
+   # Stage 2: quantify
+   uv run uq quantify /path/to/simData.cPickle --cache-dir ./cache --export-path ./results
 
-* Experimental data ingestion
-* Strain design optimization
-* ML surrogate models
-* XarrayEmitter integration (when available)
+   # HTML report
+   uv run uq report --results-path ./results
+
+Phase 1 (strategies 1–3): PCE surrogate → Sobol indices
+  ("Which parameters drive bulk output variance?")
+Phase 2 (strategy 4): Growth-stratified θ → per-stage PCE → per-stage Sobol
+  ("Which parameters drive variance WITHIN each cell cycle stage?")
+
+See :doc:`cli_reference` for full flag documentation.

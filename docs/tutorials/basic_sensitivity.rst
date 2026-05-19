@@ -1,8 +1,13 @@
 Tutorial: Basic Sensitivity Analysis
 =====================================
 
-This tutorial walks through a complete sensitivity analysis workflow using
-the vEcoli UQ framework.
+.. caution::
+   This tutorial uses an older API (``SensitivityAnalyzer``, ``InputParameterSpace``)
+   that has been replaced by the two-stage ``uq sample`` → ``uq quantify`` CLI
+   described in :doc:`../getting_started`.  For the current workflow, use
+   :doc:`../cli_reference` and :doc:`../tutorial_workflow`.
+
+   For an interactive marimo version of this content, run ``uv run uq tutorial``.
 
 Prerequisites
 -------------
