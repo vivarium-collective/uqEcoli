@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -393,6 +394,10 @@ class TimeseriesGenerator(ITimeseriesBatchProcessor):
 class TimeseriesGeneratorVecoli(ITimeseriesBatchProcessor):
     """Parameter-agnostic vEcoli simulation wrapper for the UQ pipeline.
 
+    .. deprecated::
+       Use ``V2ecoliGenerator`` from ``uq.generators.v2ecoli`` instead.
+       ``--backend vecoli`` still works but is no longer actively developed.
+
     All simulations are executed via vEcoli's ``runscripts/workflow.py``
     (Nextflow orchestration).  No ``EcoliSim`` is ever instantiated
     in the UQ process.
@@ -415,6 +420,14 @@ class TimeseriesGeneratorVecoli(ITimeseriesBatchProcessor):
     output_keys: list[str] | None = None
     observable_names: list[str] | None = None
     _obs_names: list[str] | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        warnings.warn(
+            "TimeseriesGeneratorVecoli is deprecated. "
+            "Use ``uq.generators.v2ecoli.V2ecoliGenerator`` with ``--backend v2ecoli`` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     @property
     def parameter_names(self) -> list[str]:

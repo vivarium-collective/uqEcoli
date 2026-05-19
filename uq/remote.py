@@ -330,6 +330,90 @@ class SmsApiClient:
             raise SmsApiError(resp.status_code, resp.text)
         return resp.json()  # type: ignore[no-any-return]
 
+    def submit_v2ecoli(
+        self,
+        simulator_id: int,
+        experiment_id: str,
+        cache_bundle_path: str,
+        mutations: dict[str, float] | None = None,
+        num_generations: int | None = None,
+        num_seeds: int | None = None,
+        description: str | None = None,
+        run_parca: bool = True,
+        analysis_options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Submit a v2ecoli simulation with cache bundle + mutations.
+
+        POSTs the cache bundle as multipart form data along with the
+        mutation config. The SMS-API runner loads the cache bundle,
+        applies mutations, and runs the v2ecoli composite in-process.
+
+        Args:
+            simulator_id: Database ID of the simulator configuration.
+            experiment_id: Unique experiment identifier.
+            cache_bundle_path: Path to the v2ecoli cache directory
+                (``initial_state.json`` + ``sim_data_cache.dill``).
+            mutations: Dict mapping sim_data dot-paths to new values.
+            num_generations: Number of cell generations.
+            num_seeds: Number of stochastic seeds.
+            description: Human-readable description.
+            run_parca: Whether to run ParCa before simulation.
+            analysis_options: cd1 analysis_options dict.
+
+        Returns:
+            Simulation dict with ``database_id``.
+        """
+        import json as _json
+
+        cache_path = Path(cache_bundle_path).resolve()
+        params: dict[str, Any] = {
+            "simulator_id": simulator_id,
+            "experiment_id": experiment_id,
+            "backend": "v2ecoli",
+            "run_parca": run_parca,
+        }
+        if num_generations is not None:
+            params["num_generations"] = num_generations
+        if num_seeds is not None:
+            params["num_seeds"] = num_seeds
+        if description is not None:
+            params["description"] = description
+
+        body = {
+            "backend": "v2ecoli",
+            "cache_bundle": {
+                "initial_state": str(cache_path / "initial_state.json"),
+                "sim_data_cache": str(cache_path / "sim_data_cache.dill"),
+            },
+        }
+        if mutations:
+            body["mutations"] = mutations
+        if analysis_options:
+            body["analysis_options"] = analysis_options
+
+        # Upload cache bundle files as multipart
+        files: list[tuple[str, tuple[str, Any, str]]] = []
+        for fname in ["initial_state.json", "sim_data_cache.dill"]:
+            fpath = cache_path / fname
+            if fpath.exists():
+                files.append(
+                    (f"cache_{fname.replace('.', '_')}", (fname, fpath.open("rb"), "application/octet-stream"))
+                )
+
+        items = httpx.QueryParams(
+            [(k, str(v)) for k, v in params.items() if v is not None]
+        )
+
+        resp = self.client.post(
+            "/api/v1/simulations",
+            params=items,
+            data={"body": _json.dumps(body)},
+            files=files if files else None,
+        )
+        if resp.status_code != 200:
+            raise SmsApiError(resp.status_code, resp.text)
+        return resp.json()  # type: ignore[no-any-return]
+
     def get_simulation(self, simulation_id: int) -> dict[str, Any]:
         """GET /api/v1/simulations/{id}."""
         resp = self._request_with_retry("GET", f"/api/v1/simulations/{simulation_id}")

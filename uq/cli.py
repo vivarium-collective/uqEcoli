@@ -114,11 +114,22 @@ def sample(
         None,
         help="Git ref for ecoli-sources repo (default: main).",
     ),
+    backend: str = typer.Option(
+        "vecoli",
+        help="Simulation backend: v2ecoli (in-process via process-bigraph composite, "
+        "preferred) or vecoli (subprocess via workflow.py, legacy).",
+    ),
+    max_workers: int | None = typer.Option(
+        None,
+        help="Max parallel workers for v2ecoli backend (default: 1). "
+        "Ignored for vecoli (Nextflow handles parallelism).",
+    ),
 ) -> None:
     """UQPC Steps 1-3: sample via PCRV.sampleGerm(), run vEcoli.
 
-    Two execution modes:
+    Three execution modes:
       LOCAL (default): subprocess vEcoli via runscripts/workflow.py
+      V2ECOLI (--backend v2ecoli): in-process v2ecoli composite
       REMOTE (--api-url): submit to SMS-API, poll, download cd1 analysis TSVs
 
     \b
@@ -133,6 +144,8 @@ def sample(
       fluxome          Base reaction fluxes (~2800, dry-mass normalized)
     Use --generation-lower-bound N to skip early generations.
     Use --api-url http://localhost:8080 --simulator-id 11 for remote execution.
+    Use --backend v2ecoli for in-process v2ecoli composite execution
+    (replaces subprocess + Nextflow).
     """
     import json as _json
     import shutil
@@ -207,6 +220,27 @@ def sample(
             bounds=bounds,
             seed=seed,
             conditions=conditions,
+        )
+        return
+
+    if backend == "v2ecoli":
+        _sample_v2ecoli(
+            sim_data_path=sim_data_path,
+            cache_path=cache_path,
+            X_all=X_all,
+            param_space=param_space,
+            n_samples=n_samples,
+            n_test=n_test,
+            generations=generations,
+            observables=observables,
+            generation_lower_bound=generation_lower_bound,
+            X_train=X_train,
+            X_test=X_test,
+            germ_train=germ_train,
+            germ_test=germ_test,
+            bounds=bounds,
+            seed=seed,
+            max_workers=max_workers,
         )
         return
 
@@ -599,6 +633,103 @@ def _sample_local(
     console.print(
         f"[bold green]Cached {Y_agg.shape[0]} training samples[/bold green] "
         f"({Y_agg.shape[1]} outputs) to [cyan]{cache_path}[/cyan]"
+    )
+    if Y_test_arr is not None:
+        console.print(f"  [dim]Held-out validation: {Y_test_arr.shape[0]} samples[/dim]")
+    if Y_ts:
+        console.print(f"  [dim]Timeseries: {len(Y_ts)} samples[/dim]")
+    if Y_meta:
+        console.print("  [dim]Metadata: generation/seed labels (strategies 2-3 enabled)[/dim]")
+
+
+def _sample_v2ecoli(
+    sim_data_path: str,
+    cache_path: Path,
+    X_all: np.ndarray,
+    param_space: Any,
+    n_samples: int,
+    n_test: int,
+    generations: int,
+    observables: list[str],
+    generation_lower_bound: int,
+    X_train: np.ndarray,
+    X_test: np.ndarray | None,
+    germ_train: np.ndarray,
+    germ_test: np.ndarray | None,
+    bounds: np.ndarray,
+    seed: int,
+    max_workers: int | None = None,
+) -> None:
+    """Step 3 (v2ecoli): in-process composite execution.
+
+    Replaces the subprocess-based ``_sample_local`` with an in-process
+    v2ecoli backend. Generates a cache bundle from simData, then runs
+    one composite per sample with mutated parameters.
+    """
+    from libuq.sampling import PrecomputedCache
+    from uq.generators.v2ecoli import (
+        V2ecoliGenerator,
+        generate_cache_bundle,
+    )
+    from uq.v2ecoli_bridge import observable_names_for_presets
+
+    console.print("[dim]Step 3 (v2ecoli): generating cache bundle from simData...[/dim]")
+    v2e_cache_dir = str(cache_path / "_v2ecoli_cache")
+    generate_cache_bundle(sim_data_path, v2e_cache_dir, seed=seed)
+
+    generator = V2ecoliGenerator(
+        cache_dir=v2e_cache_dir,
+        param_names=param_space.parameter_names,
+        seed=seed,
+        n_generations=generations,
+        max_time=10800.0,
+        max_workers=max_workers,
+        presets=observables,
+    )
+
+    n_total = X_all.shape[0]
+    console.print(f"[dim]Step 3: running {n_total} samples via v2ecoli (in-process)...[/dim]")
+
+    Y_all, Y_ts_all, Y_meta_all = generator._run_batch(X_all)
+
+    Y_agg = Y_all[:n_samples]
+    Y_ts = Y_ts_all[:n_samples] if Y_ts_all else None
+    Y_meta = Y_meta_all[:n_samples] if Y_meta_all else None
+
+    Y_test_arr: np.ndarray | None = None
+    Y_test_ts: list | None = None
+    Y_test_meta: list | None = None
+    if n_test > 0:
+        Y_test_arr = Y_all[n_samples:]
+        Y_test_ts = Y_ts_all[n_samples:] if Y_ts_all else None
+        Y_test_meta = Y_meta_all[n_samples:] if Y_meta_all else None
+
+    obs = observable_names_for_presets(observables)
+    if generator._obs_names:
+        obs = generator._obs_names
+
+    cache_path.mkdir(parents=True, exist_ok=True)
+    cache = PrecomputedCache(
+        cache_dir=cache_path,
+        X=X_train,
+        Y=Y_agg,
+        parameter_names=param_space.parameter_names,
+        metadata={"bounds": bounds.tolist(), "seed": seed, "observable_columns": obs},
+        Y_timeseries=Y_ts,
+        Y_timeseries_meta=Y_meta,
+        X_test=X_test,
+        Y_test=Y_test_arr,
+        Y_test_timeseries=Y_test_ts,
+        Y_test_timeseries_meta=Y_test_meta,
+    )
+    cache.save()
+    np.save(cache_path / "germ_train.npy", germ_train)
+    if germ_test is not None:
+        np.save(cache_path / "germ_test.npy", germ_test)
+
+    console.print(
+        f"[bold green]Cached {Y_agg.shape[0]} training samples[/bold green] "
+        f"(v2ecoli backend) to [cyan]{cache_path}[/cyan]"
     )
     if Y_test_arr is not None:
         console.print(f"  [dim]Held-out validation: {Y_test_arr.shape[0]} samples[/dim]")
