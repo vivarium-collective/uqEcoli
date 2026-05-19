@@ -1272,7 +1272,7 @@ S_i = 0.2249</title></rect>
     const svg = document.getElementById('pce-profile-svg');
     if (!svg) return;
     const W = 560, H = 200;
-    const ml = 60, mr = 20, mt = 10, mb = 40;
+    const ml = 70, mr = 20, mt = 10, mb = 40;
     const pw = W - ml - mr, ph = H - mt - mb;
     const selSet = new Set(selList);
 
@@ -1300,6 +1300,17 @@ S_i = 0.2249</title></rect>
     const yPad = (yMax - yMin) * 0.1;
     yMin -= yPad; yMax += yPad;
 
+    // Smart tick formatter
+    function fmtTick(v) {
+      const a = Math.abs(v);
+      if (a >= 1000) return (v / 1000).toFixed(1) + 'k';
+      if (a >= 100) return v.toFixed(1);
+      if (a >= 10) return v.toFixed(2);
+      if (a >= 1) return v.toFixed(3);
+      if (a >= 0.01) return v.toFixed(4);
+      return v.toExponential(1);
+    }
+
     let parts = [];
     // Background
     parts.push('<rect width="' + W + '" height="' + H + '" fill="#222240" rx="4"/>');
@@ -1310,8 +1321,12 @@ S_i = 0.2249</title></rect>
       parts.push('<line x1="' + ml + '" y1="' + yp.toFixed(1) + '" x2="' + (W-mr)
         + '" y2="' + yp.toFixed(1) + '" stroke="#333355" stroke-width="1"/>');
       parts.push('<text x="' + (ml-6) + '" y="' + (yp+4).toFixed(1)
-        + '" text-anchor="end" font-size="10" fill="#94a3b8">' + yv.toFixed(2) + '</text>');
+        + '" text-anchor="end" font-size="10" fill="#94a3b8">' + fmtTick(yv) + '</text>');
     }
+    // Y-axis title
+    parts.push('<text x="8" y="' + (mt + ph/2 + 4)
+      + '" text-anchor="middle" font-size="10" fill="#94a3b8"'
+      + ' transform="rotate(-90 8 ' + (mt + ph/2 + 4) + ')">Predicted Value</text>');
     // X-axis labels
     for (let s = 0; s < N_STAGES; s++) {
       const xc = ml + (s + 0.5) * pw / N_STAGES;
