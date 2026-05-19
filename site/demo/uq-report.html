@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UQ Report</title>
+<style>
+:root {
+  --bg: #0f0f1a;
+  --surface: #1a1a2e;
+  --surface2: #222240;
+  --border: #2d2d50;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+  --success: #10b981;
+  --warning: #f59e0b;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+.container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+
+/* Header */
+.header {
+  text-align: center;
+  padding: 48px 0 32px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 40px;
+}
+.header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 8px;
+}
+.header .subtitle { color: var(--text-dim); font-size: 14px; }
+
+/* Metrics */
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 14px;
+  margin-bottom: 36px;
+}
+.metric {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  text-align: center;
+}
+.metric .value { font-size: 26px; font-weight: 700; color: var(--accent-light); }
+.metric .label {
+  font-size: 11px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px;
+}
+
+/* Sections */
+.section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  margin-bottom: 24px;
+}
+.section h2 {
+  font-size: 18px; font-weight: 600;
+  margin-bottom: 16px;
+  display: flex; align-items: center; gap: 10px;
+}
+.section h2 .badge {
+  font-size: 11px; background: var(--accent); color: #fff;
+  padding: 2px 8px; border-radius: 10px; font-weight: 500;
+}
+.section-desc {
+  color: var(--text-dim); font-size: 13px;
+  margin-bottom: 16px; line-height: 1.5;
+}
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  text-align: left; padding: 10px 12px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-dim); font-weight: 600;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+tr:last-child td { border-bottom: none; }
+tr:hover { background: var(--surface2); }
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px; background: var(--surface2);
+  padding: 2px 6px; border-radius: 4px;
+}
+.rank { color: var(--text-dim); font-weight: 600; width: 40px; }
+.bar-cell { display: flex; align-items: center; gap: 8px; min-width: 140px; }
+.bar {
+  height: 8px; background: var(--accent);
+  border-radius: 4px; min-width: 2px;
+}
+.bar-cell span { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Stage/evolution tables */
+.stage-table td {
+  padding: 6px 8px; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.stage-table th { font-size: 10px; padding: 6px 8px; }
+.trend-up { color: #ef4444; font-weight: 600; }
+.trend-down { color: #10b981; font-weight: 600; }
+.trend-flat { color: var(--text-dim); }
+
+/* Charts */
+.chart-container {
+  display: flex; justify-content: center;
+  padding: 8px 0; overflow-x: auto;
+}
+svg text { font-family: 'Inter', -apple-system, sans-serif; }
+
+/* Observable pills */
+.obs-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.obs-pill {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 20px; padding: 4px 14px;
+  font-size: 12px; font-family: monospace; color: var(--text-dim);
+}
+
+/* Info grid */
+.info-grid {
+  display: grid; grid-template-columns: 140px 1fr;
+  gap: 8px 16px; font-size: 13px;
+}
+.info-grid .key { color: var(--text-dim); font-weight: 500; }
+.info-grid .val { color: var(--text); word-break: break-all; }
+.info-grid .val code { font-size: 11px; }
+
+/* Callouts */
+.callout {
+  border-radius: 12px; padding: 20px 24px;
+  margin-bottom: 24px;
+  display: flex; align-items: center; gap: 16px;
+}
+.callout .icon { font-size: 28px; line-height: 1; }
+.callout .detail { flex: 1; }
+.callout .detail .title { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+.callout .detail .desc { font-size: 13px; color: var(--text-dim); }
+.callout-warn {
+  background: linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05));
+  border: 1px solid rgba(245,158,11,0.3);
+}
+.callout-ok {
+  background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.05));
+  border: 1px solid rgba(16,185,129,0.3);
+}
+.callout-info {
+  background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(99,102,241,0.05));
+  border: 1px solid rgba(99,102,241,0.3);
+}
+
+/* Accordion (strategy cards) */
+details.accordion {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+details.accordion > summary {
+  padding: 20px 28px;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 600;
+  user-select: none;
+}
+details.accordion > summary::-webkit-details-marker { display: none; }
+details.accordion > summary::before {
+  content: "\25B6";
+  font-size: 12px;
+  color: var(--accent-light);
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+details.accordion[open] > summary::before {
+  transform: rotate(90deg);
+}
+details.accordion > summary:hover {
+  background: var(--surface2);
+}
+details.accordion > .accordion-body {
+  padding: 0 28px 28px;
+}
+
+/* Divider */
+.strategy-divider {
+  text-align: center; color: var(--text-dim);
+  font-size: 12px; text-transform: uppercase;
+  letter-spacing: 1px; margin: 36px 0 24px;
+  display: flex; align-items: center; gap: 16px;
+}
+.strategy-divider::before, .strategy-divider::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+
+/* Footer */
+.footer {
+  text-align: center; padding: 32px 0 16px;
+  color: var(--text-dim); font-size: 12px;
+  border-top: 1px solid var(--border); margin-top: 24px;
+}
+
+@media (max-width: 600px) {
+  .container { padding: 20px 12px; }
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .header h1 { font-size: 28px; }
+  .section { padding: 16px; }
+}
+
+/* Nav anchors */
+html { scroll-behavior: smooth; }
+.nav-bar {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  padding: 12px 0; margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.nav-bar a {
+  color: var(--text-dim); text-decoration: none; font-weight: 500;
+  transition: color 0.15s;
+}
+.nav-bar a:hover { color: var(--accent-light); }
+.nav-bar .nav-label {
+  color: var(--text-dim); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+/* Architecture diagram */
+.arch-container {
+  display: flex; justify-content: center;
+  padding: 8px 0; overflow-x: auto;
+}
+.arch-container svg { max-width: 100%; height: auto; }
+.arch-link {
+  text-align: center; margin-top: 8px; font-size: 13px;
+}
+.arch-link a { color: var(--accent-light); }
+details.arch-details > summary {
+  cursor: pointer; color: var(--accent-light);
+  font-size: 13px; font-weight: 500;
+  padding: 8px 0; user-select: none;
+}
+
+/* How to read Sobol */
+.explainer-box {
+  background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(99,102,241,0.04));
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: 12px; padding: 20px 24px;
+  margin-bottom: 24px;
+}
+.explainer-box h3 {
+  font-size: 15px; font-weight: 600; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 8px;
+}
+.explainer-box p { font-size: 13px; color: var(--text-dim); line-height: 1.7; margin-bottom: 8px; }
+.explainer-box p:last-child { margin-bottom: 0; }
+.explainer-box code { font-size: 12px; }
+.formula { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 13px; color: var(--accent-light); text-align: center; padding: 8px 0; }
+
+/* CLI table in report */
+.cli-table td:first-child { white-space: nowrap; }
+.cli-section { margin-top: 24px; }
+
+/* Interactive explorer */
+.explorer-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 24px;
+  margin-top: 16px;
+}
+@media (max-width: 700px) {
+  .explorer-grid { grid-template-columns: 1fr; }
+}
+.slider-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.slider-group label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 4px;
+  color: var(--text-dim);
+}
+.slider-group label code {
+  color: var(--text);
+}
+.slider-group input[type=range] {
+  width: 100%;
+  accent-color: var(--accent);
+  height: 6px;
+  cursor: pointer;
+}
+.slider-group .bounds {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.pred-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.pred-readout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.pred-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+.pred-card .pred-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.pred-card .pred-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent-light);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.profile-chart {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+.profile-chart h3 {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.explorer-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.explorer-controls button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.explorer-controls button:hover { opacity: 0.85; }
+.obs-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.obs-toggle {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+.obs-toggle:hover { border-color: var(--accent); }
+.obs-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.obs-toggle .color-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="nav-bar">
+  <span class="nav-label">Jump to:</span>
+  <a href="#section-metrics">Metrics</a>
+  <a href="#section-architecture">Architecture</a>
+  <a href="#section-design">Design</a>
+  <a href="#section-sensitivity">Sensitivity</a>
+  <a href="#section-population">Population</a>
+  <a href="#section-growth">Growth-Stratified</a>
+  <a href="#section-explorer">PCE Explorer</a>
+  <a href="#section-provenance">Provenance</a>
+  <span style="margin-left:auto;font-size:10px;color:var(--text-dim);">
+    <a href="index.html" style="color:var(--accent-light);">&larr; Demo</a>
+  </span>
+</div>
+
+<div class="header">
+  <div style="display:flex;justify-content:center;margin-bottom:20px;">
+    <div style="display:inline-flex;align-items:center;gap:0;">
+      <div style="
+        border:2px solid #ff3366;
+        border-radius:50px;
+        padding:0.7rem 2rem;
+        background:linear-gradient(135deg, rgba(233,30,144,0.08), rgba(0,229,255,0.05));
+        text-align:center;
+        min-width:320px;
+      ">
+        <div style="
+          font-family:'Courier New',monospace;
+          font-weight:900;
+          font-size:1.4rem;
+          letter-spacing:0.15em;
+          background:linear-gradient(90deg, #ff3366, #00f0ff);
+          -webkit-background-clip:text;
+          -webkit-text-fill-color:transparent;
+        ">&#x1F9EC; ATLANTIS &#x1F9EC;</div>
+        <div style="
+          font-family:'Courier New',monospace;
+          font-size:0.7rem;
+          color:#00f0ff;
+          letter-spacing:0.1em;
+          margin-top:0.2rem;
+        ">whole-cell simulation platform</div>
+      </div>
+      <svg width="90" height="60" viewBox="0 0 90 60" style="margin-left:-2px;">
+        <path d="M0,30 C15,15 25,45 40,30 S60,15 75,30 S85,42 90,35" stroke="#ff3366" fill="none" stroke-width="2" opacity="0.7"/>
+        <path d="M0,25 C12,10 22,40 35,25 S55,10 70,25 S82,38 88,30" stroke="#00f0ff" fill="none" stroke-width="1.5" opacity="0.5"/>
+        <path d="M0,35 C18,20 28,50 45,35 S65,20 80,35 S88,48 90,40" stroke="#ffd700" fill="none" stroke-width="1.5" opacity="0.5"/>
+      </svg>
+    </div>
+  </div>
+  <div style="padding:0.7rem 2rem">
+    <h1>Uncertainty Quantification Report</h1>
+    <div class="subtitle">May 06, 2026 at 16:50 UTC</div>
+  </div>
+</div>
+
+<!-- Architecture -->
+<div class="section" id="section-architecture">
+  <h2>Pipeline Architecture <span class="badge">RFC006</span></h2>
+  <p class="section-desc">
+    The UQPC pipeline proceeds in 7 steps across two phases: parameter sampling,
+    PCE surrogate fitting, Sobol index computation, and cell cycle analysis.
+    <a href="architecture/rfc006_workflow.svg" style="color:var(--accent-light);" target="_blank">Open full-size SVG &nearr;</a>
+  </p>
+  <details class="arch-details">
+    <summary>Show architecture diagram</summary>
+    <div class="arch-container">
+      <object data="architecture/rfc006_workflow.svg" type="image/svg+xml" style="width:100%;max-width:1100px;">
+        <img src="architecture/rfc006_workflow.svg" alt="RFC006 Pipeline Architecture" style="width:100%;max-width:1100px;">
+      </object>
+    </div>
+  </details>
+</div>
+
+<!-- Key metrics -->
+<div class="metrics" id="section-metrics">
+  <div class="metric"><div class="value">6</div><div class="label">Parameters</div></div>
+  <div class="metric"><div class="value">5</div><div class="label">Observables</div></div>
+  <div class="metric"><div class="value">10</div><div class="label">Samples</div></div>
+  <div class="metric"><div class="value">1</div><div class="label">Generations</div></div>
+  <div class="metric"><div class="value">1</div><div class="label">Lineages</div></div>
+  <div class="metric"><div class="value">10</div><div class="label">Cell Cycle Stages</div></div>
+</div>
+
+<!-- Top driver -->
+<div class="callout callout-info">
+  <div class="icon">&#x1F3AF;</div>
+  <div class="detail">
+    <div class="title">Population-Level Top Driver: <code>basal_elongation_rate</code></div>
+    <div class="desc">Explains 28.5% of total output variance at the population level
+      (S_Ti&nbsp;=&nbsp;0.2850). See below for whether this holds across strategies.</div>
+  </div>
+</div>
+
+<!-- ═══════════════ EXPERIMENTAL DESIGN ═══════════════ -->
+
+<div class="strategy-divider" id="section-design">Experimental Design</div>
+
+<div class="section">
+  <h2>Simulation Design</h2>
+  <p class="section-desc">
+    Each sample corresponds to a full vEcoli whole-cell simulation with perturbed
+    <code>SimulationDataEcoli</code> attributes. Parameters are varied simultaneously
+    via Latin Hypercube Sampling within the bounds below, and the simulation is
+    executed using the <code>sim_data_setattr</code> variant mechanism.
+  </p>
+  <div class="info-grid" style="margin-bottom:16px;">
+    <div class="key">Samples (N)</div><div class="val">10</div>
+    <div class="key">Polynomial Order</div><div class="val">2</div>
+    <div class="key">Basis</div><div class="val">Legendre</div>
+    <div class="key">Generations</div><div class="val">1</div>
+    <div class="key">Lineage Seeds</div><div class="val">1</div>
+  </div>
+</div>
+
+
+<div class="section">
+  <h2>Parameter Specifications</h2>
+  <p class="section-desc">
+    Each parameter targets a specific attribute in the vEcoli
+    <code>SimulationDataEcoli</code> object. Bounds define the perturbation range
+    used during sampling (&plusmn; around the calibrated baseline value).
+  </p>
+  <div style="overflow-x:auto;">
+    <table>
+<thead><tr>
+<th>Parameter</th><th>SimData Path</th>
+<th>Min</th><th>Max</th><th>Midpoint</th>
+<th>Biological Role</th>
+</tr></thead>
+<tbody>
+<tr><td><code>rnap_free</code></td><td><code style="font-size:10px;color:var(--text-dim)">process.transcription.fraction_active_rnap_free</code></td><td style="text-align:right;font-variant-numeric:tabular-nums">0.2500</td><td style="text-align:right;font-variant-numeric:tabular-nums">0.4700</td><td style="text-align:right;font-variant-numeric:tabular-nums">0.3600</td><td style="font-size:12px;color:var(--text-dim);max-width:260px">Fraction of RNAP actively transcribing when ppGpp-free. Controls rRNA/mRNA/tRNA synthesis rates. Experimentally tunable via ppGpp circuit mutations (relA/spoT). Baseline ~0.36.</td></tr>
+<tr><td><code>rnap_bound</code></td><td><code style="font-size:10px;color:var(--text-dim)">process.transcription.fraction_active_rnap_bound</code></td><td style="text-align:right;font-variant-numeric:tabular-nums">0.1200</td><td style="text-align:right;font-variant-numeric:tabular-nums">0.2200</td><td style="text-align:right;font-variant-numeric:tabular-nums">0.1700</td><td style="font-size:12px;color:var(--text-dim);max-width:260px">Fraction of RNAP actively transcribing when ppGpp-bound. ppGpp destabilizes open complex formation, reducing this fraction. Tunable via relA/spoT knockouts. Baseline ~0.17.</td></tr>
+<tr><td><code>basal_elongation_rate</code></td><td><code style="font-size:10px;color:var(--text-dim)">process.translation.basal_elongation_rate</code></td><td style="text-align:right;font-variant-numeric:tabular-nums">15.0000</td><td style="text-align:right;font-variant-numeric:tabular-nums">28.0000</td><td style="text-align:right;font-variant-numeric:tabular-nums">21.5000</td><td style="font-size:12px;color:var(--text-dim);max-width:260px">Ribosome elongation rate for non-ribosomal proteins (aa/s). Experimentally tunable via sub-inhibitory chloramphenicol, fusidic acid, or growth temperature. Baseline ~22 aa/s.</td></tr>
+<tr><td><code>kinetic_objective_weight</code></td><td><code style="font-size:10px;color:var(--text-dim)">process.metabolism.kinetic_objective_weight</code></td><td style="text-align:right;font-variant-numeric:tabular-nums">5.00e-08</td><td style="text-align:right;font-variant-numeric:tabular-nums">5.00e-07</td><td style="text-align:right;font-variant-numeric:tabular-nums">2.75e-07</td><td style="font-size:12px;color:var(--text-dim);max-width:260px">Weight on kinetic vs homeostatic objective in FBA. Controls balance between matching enzyme kinetics and maintaining metabolite homeostasis. Baseline 1e-7 (linear solver).</td></tr>
+<tr><td><code>secretion_penalty_coeff</code></td><td><code style="font-size:10px;color:var(--text-dim)">process.metabolism.secretion_penalty_coeff</code></td><td style="text-align:right;font-variant-numeric:tabular-nums">5.00e-04</td><td style="text-align:right;font-variant-numeric:tabular-nums">5.00e-03</td><td style="text-align:right;font-variant-numeric:tabular-nums">2.75e-03</td><td style="font-size:12px;color:var(--text-dim);max-width:260px">Penalty on metabolite secretion fluxes in FBA. Higher values force the cell to retain metabolites. Controls acetate overflow metabolism, experimentally tunable via media composition. Baseline 0.001.</td></tr>
+<tr><td><code>dry_mass_frac</code></td><td><code style="font-size:10px;color:var(--text-dim)">mass.cell_dry_mass_fraction</code></td><td style="text-align:right;font-variant-numeric:tabular-nums">0.2500</td><td style="text-align:right;font-variant-numeric:tabular-nums">0.3500</td><td style="text-align:right;font-variant-numeric:tabular-nums">0.3000</td><td style="font-size:12px;color:var(--text-dim);max-width:260px">Fraction of total cell mass that is dry mass. Determines relationship between cell volume and biosynthetic capacity. Constrained by buoyant density measurements. Baseline ~0.30.</td></tr>
+</tbody>
+</table>
+  </div>
+</div>
+
+
+<div class="section">
+  <h2>Tracked Observables</h2>
+  <p class="section-desc">
+    Output variables extracted from each simulation and used to compute
+    sensitivity indices. These correspond to time-averaged quantities
+    from vEcoli's listener outputs.
+  </p>
+  <div class="obs-list">
+    <span class="obs-pill">dry_mass</span><span class="obs-pill">cell_mass</span><span class="obs-pill">volume</span><span class="obs-pill">growth</span><span class="obs-pill">growth_rate</span>
+  </div>
+</div>
+
+<div class="section cli-section">
+  <h2>CLI Command Reference</h2>
+  <p class="section-desc">
+    All <code>uq</code> subcommands for running and analyzing the UQ pipeline.
+    See <a href="architecture/cli_cheatsheet.html" style="color:var(--accent-light);">full cheatsheet</a> for details.
+  </p>
+  <div style="overflow-x:auto;">
+    <table class="cli-table">
+      <thead><tr><th>Command</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>sample</code></td><td>UQPC Steps 1-3: LHS sampling + vEcoli execution (local or SMS-API remote)</td></tr>
+        <tr><td><code>quantify</code></td><td>UQPC Steps 4-5: fit PCE surrogates, compute Sobol indices (all 4 strategies)</td></tr>
+        <tr><td><code>report</code></td><td>Generate self-contained HTML report from UQ results</td></tr>
+        <tr><td><code>dashboard</code></td><td>Interactive tkinter DAW or marimo dashboard</td></tr>
+        <tr><td><code>tui</code></td><td>Textual terminal UI with parameter rankings and observable selector</td></tr>
+        <tr><td><code>gui</code></td><td>Marimo browser GUI with reactive PCE parameter sliders</td></tr>
+        <tr><td><code>compare</code></td><td>Cross-experiment Sobol comparison with rank stability indicators</td></tr>
+        <tr><td><code>export-figures</code></td><td>Publication-ready PDFs and LaTeX tables</td></tr>
+        <tr><td><code>fetch</code></td><td>Download cd1 analysis TSVs from SMS-API</td></tr>
+        <tr><td><code>show-config</code></td><td>Preview vEcoli workflow config JSON</td></tr>
+        <tr><td><code>suggest-experiment</code></td><td>Identify max-uncertainty parameter region</td></tr>
+        <tr><td><code>init</code></td><td>Guided project setup wizard</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════ SENSITIVITY ANALYSIS ═══════════════ -->
+
+<div class="strategy-divider" id="section-sensitivity">Sensitivity Analysis</div>
+
+<div class="callout callout-ok"><div class="icon">&#x2714;&#xFE0F;</div><div class="detail"><div class="title">Consistent Rankings</div><div class="desc">The top driver is the same across all aggregation strategies &mdash; parameter importance is robust to how cells are grouped.</div></div></div>
+
+<div class="explainer-box">
+  <h3>&#x1F4CA; How to Read Sobol Indices</h3>
+  <p>
+    <strong>S<sub>i</sub> (First-Order):</strong> The fraction of total output variance
+    explained by a parameter <em>alone</em>. A high S<sub>i</sub> means this parameter
+    directly controls the output &mdash; if you could fix it, you'd eliminate that much
+    uncertainty.
+  </p>
+  <p>
+    <strong>S<sub>Ti</sub> (Total-Order):</strong> The fraction explained by a parameter
+    including all its interactions with other parameters. The gap
+    S<sub>Ti</sub> &minus; S<sub>i</sub> reveals how much a parameter acts through
+    interactions rather than independently.
+  </p>
+  <div class="formula">V(Y) = &#x2211;<sub>i</sub> V<sub>i</sub> + &#x2211;<sub>i&lt;j</sub> V<sub>ij</sub> + ... + V<sub>12...d</sub></div>
+  <p style="margin-bottom:0;">
+    <strong>Rule of thumb:</strong> Parameters with high S<sub>Ti</sub> are the most
+    promising targets for experimental measurement &mdash; reducing uncertainty in
+    these parameters will most effectively tighten model predictions.
+    Ranking consistency across strategies (left) builds confidence in the findings.
+  </p>
+</div>
+
+<div class="section" id="section-cross-strategy">
+  <h2>S_Ti Comparison Across Strategies</h2>
+  <p class="section-desc">
+    Total Sobol indices side by side. Differences reveal that parameter importance
+    depends on how cells are grouped &mdash; population-level conclusions alone
+    may miss important drivers visible at the generation, lineage, or cell-cycle level.
+  </p>
+  <div class="chart-container"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 360" style="width:100%;max-width:700px;height:auto;">
+<line x1="55" y1="265.0" x2="680" y2="265.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="269.0" text-anchor="end" font-size="11" fill="#94a3b8">0.00</text>
+<line x1="55" y1="221.0" x2="680" y2="221.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="225.0" text-anchor="end" font-size="11" fill="#94a3b8">0.06</text>
+<line x1="55" y1="177.0" x2="680" y2="177.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="181.0" text-anchor="end" font-size="11" fill="#94a3b8">0.12</text>
+<line x1="55" y1="133.0" x2="680" y2="133.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="137.0" text-anchor="end" font-size="11" fill="#94a3b8">0.18</text>
+<line x1="55" y1="89.0" x2="680" y2="89.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="93.0" text-anchor="end" font-size="11" fill="#94a3b8">0.24</text>
+<line x1="55" y1="45.0" x2="680" y2="45.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="49.0" text-anchor="end" font-size="11" fill="#94a3b8">0.30</text>
+<rect x="57.1" y="165.1" width="20.8" height="99.9" fill="#6366f1" rx="2"><title>Population: rnap_free = 0.1362</title></rect>
+<rect x="80.0" y="165.1" width="20.8" height="99.9" fill="#f59e0b" rx="2"><title>By Generation: rnap_free = 0.1362</title></rect>
+<rect x="102.9" y="165.1" width="20.8" height="99.9" fill="#10b981" rx="2"><title>By Lineage: rnap_free = 0.1362</title></rect>
+<rect x="125.8" y="168.5" width="20.8" height="96.5" fill="#ef4444" rx="2"><title>Growth-Stratified: rnap_free = 0.1316</title></rect>
+<text x="107.1" y="281" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 107.1 281)">rnap_free</text>
+<rect x="161.3" y="80.5" width="20.8" height="184.5" fill="#6366f1" rx="2"><title>Population: rnap_bound = 0.2516</title></rect>
+<rect x="184.2" y="80.5" width="20.8" height="184.5" fill="#f59e0b" rx="2"><title>By Generation: rnap_bound = 0.2516</title></rect>
+<rect x="207.1" y="80.5" width="20.8" height="184.5" fill="#10b981" rx="2"><title>By Lineage: rnap_bound = 0.2516</title></rect>
+<rect x="230.0" y="77.2" width="20.8" height="187.8" fill="#ef4444" rx="2"><title>Growth-Stratified: rnap_bound = 0.2561</title></rect>
+<text x="211.3" y="281" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 211.3 281)">rnap_bound</text>
+<rect x="265.4" y="56.0" width="20.8" height="209.0" fill="#6366f1" rx="2"><title>Population: basal_elongation_rate = 0.2850</title></rect>
+<rect x="288.3" y="56.0" width="20.8" height="209.0" fill="#f59e0b" rx="2"><title>By Generation: basal_elongation_rate = 0.2850</title></rect>
+<rect x="311.2" y="56.0" width="20.8" height="209.0" fill="#10b981" rx="2"><title>By Lineage: basal_elongation_rate = 0.2850</title></rect>
+<rect x="334.2" y="58.3" width="20.8" height="206.7" fill="#ef4444" rx="2"><title>Growth-Stratified: basal_elongation_rate = 0.2819</title></rect>
+<text x="315.4" y="281" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 315.4 281)">basal_elongation_rate</text>
+<rect x="369.6" y="180.5" width="20.8" height="84.5" fill="#6366f1" rx="2"><title>Population: kinetic_objective_weight = 0.1153</title></rect>
+<rect x="392.5" y="180.5" width="20.8" height="84.5" fill="#f59e0b" rx="2"><title>By Generation: kinetic_objective_weight = 0.1153</title></rect>
+<rect x="415.4" y="180.5" width="20.8" height="84.5" fill="#10b981" rx="2"><title>By Lineage: kinetic_objective_weight = 0.1153</title></rect>
+<rect x="438.3" y="177.9" width="20.8" height="87.1" fill="#ef4444" rx="2"><title>Growth-Stratified: kinetic_objective_weight = 0.1187</title></rect>
+<text x="419.6" y="281" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 419.6 281)">kinetic_objective_weight</text>
+<rect x="473.8" y="166.5" width="20.8" height="98.5" fill="#6366f1" rx="2"><title>Population: secretion_penalty_coeff = 0.1343</title></rect>
+<rect x="496.7" y="166.5" width="20.8" height="98.5" fill="#f59e0b" rx="2"><title>By Generation: secretion_penalty_coeff = 0.1343</title></rect>
+<rect x="519.6" y="166.5" width="20.8" height="98.5" fill="#10b981" rx="2"><title>By Lineage: secretion_penalty_coeff = 0.1343</title></rect>
+<rect x="542.5" y="166.9" width="20.8" height="98.1" fill="#ef4444" rx="2"><title>Growth-Stratified: secretion_penalty_coeff = 0.1337</title></rect>
+<text x="523.8" y="281" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 523.8 281)">secretion_penalty_coeff</text>
+<rect x="577.9" y="91.7" width="20.8" height="173.3" fill="#6366f1" rx="2"><title>Population: dry_mass_frac = 0.2363</title></rect>
+<rect x="600.8" y="91.7" width="20.8" height="173.3" fill="#f59e0b" rx="2"><title>By Generation: dry_mass_frac = 0.2363</title></rect>
+<rect x="623.8" y="91.7" width="20.8" height="173.3" fill="#10b981" rx="2"><title>By Lineage: dry_mass_frac = 0.2363</title></rect>
+<rect x="646.7" y="88.1" width="20.8" height="176.9" fill="#ef4444" rx="2"><title>Growth-Stratified: dry_mass_frac = 0.2413</title></rect>
+<text x="627.9" y="281" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 627.9 281)">dry_mass_frac</text>
+<rect x="65" y="17" width="12" height="12" fill="#6366f1" rx="2"/>
+<text x="81" y="27" font-size="11" fill="#e2e8f0">Population</text>
+<rect x="205" y="17" width="12" height="12" fill="#f59e0b" rx="2"/>
+<text x="221" y="27" font-size="11" fill="#e2e8f0">By Generation</text>
+<rect x="345" y="17" width="12" height="12" fill="#10b981" rx="2"/>
+<text x="361" y="27" font-size="11" fill="#e2e8f0">By Lineage</text>
+<rect x="485" y="17" width="12" height="12" fill="#ef4444" rx="2"/>
+<text x="501" y="27" font-size="11" fill="#e2e8f0">Growth-Stratified</text>
+</svg></div>
+</div>
+
+<!-- Strategy 1: Population -->
+<details class="accordion" id="section-population">
+  <summary>Population <span class="badge">Strategy 1</span></summary>
+  <div class="accordion-body">
+    <p class="section-desc">
+      All cells pooled uniformly across every seed and generation.
+      Which parameters drive the most variance across the entire population?
+    </p>
+    <div class="chart-container"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 320" style="width:100%;max-width:700px;height:auto;">
+<line x1="55" y1="230.0" x2="680" y2="230.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="234.0" text-anchor="end" font-size="11" fill="#94a3b8">0.00</text>
+<line x1="55" y1="190.0" x2="680" y2="190.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="194.0" text-anchor="end" font-size="11" fill="#94a3b8">0.06</text>
+<line x1="55" y1="150.0" x2="680" y2="150.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="154.0" text-anchor="end" font-size="11" fill="#94a3b8">0.12</text>
+<line x1="55" y1="110.0" x2="680" y2="110.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="114.0" text-anchor="end" font-size="11" fill="#94a3b8">0.18</text>
+<line x1="55" y1="70.0" x2="680" y2="70.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="74.0" text-anchor="end" font-size="11" fill="#94a3b8">0.24</text>
+<line x1="55" y1="30.0" x2="680" y2="30.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="34.0" text-anchor="end" font-size="11" fill="#94a3b8">0.30</text>
+<rect x="60.2" y="139.2" width="36.5" height="90.8" fill="#6366f1" rx="3"><title>fraction_active_rnap_free
+S_Ti = 0.1362</title></rect>
+<rect x="101.9" y="179.6" width="36.5" height="50.4" fill="#f59e0b" rx="3"><title>fraction_active_rnap_free
+S_i = 0.0755</title></rect>
+<text x="107.1" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 107.1 246)">rnap_free</text>
+<rect x="164.4" y="62.2" width="36.5" height="167.8" fill="#6366f1" rx="3"><title>fraction_active_rnap_bound
+S_Ti = 0.2516</title></rect>
+<rect x="206.0" y="113.1" width="36.5" height="116.9" fill="#f59e0b" rx="3"><title>fraction_active_rnap_bound
+S_i = 0.1754</title></rect>
+<text x="211.3" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 211.3 246)">rnap_bound</text>
+<rect x="268.5" y="40.0" width="36.5" height="190.0" fill="#6366f1" rx="3"><title>basal_elongation_rate
+S_Ti = 0.2850</title></rect>
+<rect x="310.2" y="62.3" width="36.5" height="167.7" fill="#f59e0b" rx="3"><title>basal_elongation_rate
+S_i = 0.2515</title></rect>
+<text x="315.4" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 315.4 246)">basal_elongation_rate</text>
+<rect x="372.7" y="153.1" width="36.5" height="76.9" fill="#6366f1" rx="3"><title>kinetic_objective_weight
+S_Ti = 0.1153</title></rect>
+<rect x="414.4" y="222.4" width="36.5" height="7.6" fill="#f59e0b" rx="3"><title>kinetic_objective_weight
+S_i = 0.0113</title></rect>
+<text x="419.6" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 419.6 246)">kinetic_objective_weight</text>
+<rect x="476.9" y="140.4" width="36.5" height="89.6" fill="#6366f1" rx="3"><title>secretion_penalty_coeff
+S_Ti = 0.1343</title></rect>
+<rect x="518.5" y="161.7" width="36.5" height="68.3" fill="#f59e0b" rx="3"><title>secretion_penalty_coeff
+S_i = 0.1024</title></rect>
+<text x="523.8" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 523.8 246)">secretion_penalty_coeff</text>
+<rect x="581.0" y="72.4" width="36.5" height="157.6" fill="#6366f1" rx="3"><title>cell_dry_mass_fraction
+S_Ti = 0.2363</title></rect>
+<rect x="622.7" y="80.1" width="36.5" height="149.9" fill="#f59e0b" rx="3"><title>cell_dry_mass_fraction
+S_i = 0.2249</title></rect>
+<text x="627.9" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 627.9 246)">dry_mass_frac</text>
+<rect x="65" y="38" width="12" height="12" fill="#6366f1" rx="2"/>
+<text x="81" y="48" font-size="11" fill="#e2e8f0">Total (S_Ti)</text>
+<rect x="165" y="38" width="12" height="12" fill="#f59e0b" rx="2"/>
+<text x="181" y="48" font-size="11" fill="#e2e8f0">First (S_i)</text>
+</svg></div>
+    <table>
+<thead><tr>
+<th>Rank</th><th>Parameter</th><th>S_Ti (Total)</th>
+<th>S_i (First)</th><th>Interaction</th>
+</tr></thead>
+<tbody>
+<tr><td class="rank">1</td><td><code>basal_elongation_rate</code></td><td><div class="bar-cell"><div class="bar" style="width:29%"></div><span>0.2850</span></div></td>
+<td>0.2515</td><td>0.0335</td>
+</tr>
+<tr><td class="rank">2</td><td><code>rnap_bound</code></td><td><div class="bar-cell"><div class="bar" style="width:25%"></div><span>0.2516</span></div></td>
+<td>0.1754</td><td>0.0763</td>
+</tr>
+<tr><td class="rank">3</td><td><code>dry_mass_frac</code></td><td><div class="bar-cell"><div class="bar" style="width:24%"></div><span>0.2363</span></div></td>
+<td>0.2249</td><td>0.0115</td>
+</tr>
+<tr><td class="rank">4</td><td><code>rnap_free</code></td><td><div class="bar-cell"><div class="bar" style="width:14%"></div><span>0.1362</span></div></td>
+<td>0.0755</td><td>0.0607</td>
+</tr>
+<tr><td class="rank">5</td><td><code>secretion_penalty_coeff</code></td><td><div class="bar-cell"><div class="bar" style="width:13%"></div><span>0.1343</span></div></td>
+<td>0.1024</td><td>0.0319</td>
+</tr>
+<tr><td class="rank">6</td><td><code>kinetic_objective_weight</code></td><td><div class="bar-cell"><div class="bar" style="width:12%"></div><span>0.1153</span></div></td>
+<td>0.0113</td><td>0.1040</td>
+</tr>
+</tbody>
+</table>
+  </div>
+</details>
+
+<!-- Strategy 2: By Generation -->
+<details class="accordion"><summary>By Generation <span class="badge">Strategy 2</span></summary><div class="accordion-body"><p class="section-desc">Sensitivity analysis performed on data aggregated by generation. <strong>1 generation</strong> analyzed.</p><div class="chart-container"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 320" style="width:100%;max-width:700px;height:auto;">
+<line x1="55" y1="230.0" x2="680" y2="230.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="234.0" text-anchor="end" font-size="11" fill="#94a3b8">0.00</text>
+<line x1="55" y1="190.0" x2="680" y2="190.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="194.0" text-anchor="end" font-size="11" fill="#94a3b8">0.06</text>
+<line x1="55" y1="150.0" x2="680" y2="150.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="154.0" text-anchor="end" font-size="11" fill="#94a3b8">0.12</text>
+<line x1="55" y1="110.0" x2="680" y2="110.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="114.0" text-anchor="end" font-size="11" fill="#94a3b8">0.18</text>
+<line x1="55" y1="70.0" x2="680" y2="70.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="74.0" text-anchor="end" font-size="11" fill="#94a3b8">0.24</text>
+<line x1="55" y1="30.0" x2="680" y2="30.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="34.0" text-anchor="end" font-size="11" fill="#94a3b8">0.30</text>
+<rect x="60.2" y="139.2" width="36.5" height="90.8" fill="#6366f1" rx="3"><title>fraction_active_rnap_free
+S_Ti = 0.1362</title></rect>
+<rect x="101.9" y="179.6" width="36.5" height="50.4" fill="#f59e0b" rx="3"><title>fraction_active_rnap_free
+S_i = 0.0755</title></rect>
+<text x="107.1" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 107.1 246)">rnap_free</text>
+<rect x="164.4" y="62.2" width="36.5" height="167.8" fill="#6366f1" rx="3"><title>fraction_active_rnap_bound
+S_Ti = 0.2516</title></rect>
+<rect x="206.0" y="113.1" width="36.5" height="116.9" fill="#f59e0b" rx="3"><title>fraction_active_rnap_bound
+S_i = 0.1754</title></rect>
+<text x="211.3" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 211.3 246)">rnap_bound</text>
+<rect x="268.5" y="40.0" width="36.5" height="190.0" fill="#6366f1" rx="3"><title>basal_elongation_rate
+S_Ti = 0.2850</title></rect>
+<rect x="310.2" y="62.3" width="36.5" height="167.7" fill="#f59e0b" rx="3"><title>basal_elongation_rate
+S_i = 0.2515</title></rect>
+<text x="315.4" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 315.4 246)">basal_elongation_rate</text>
+<rect x="372.7" y="153.1" width="36.5" height="76.9" fill="#6366f1" rx="3"><title>kinetic_objective_weight
+S_Ti = 0.1153</title></rect>
+<rect x="414.4" y="222.4" width="36.5" height="7.6" fill="#f59e0b" rx="3"><title>kinetic_objective_weight
+S_i = 0.0113</title></rect>
+<text x="419.6" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 419.6 246)">kinetic_objective_weight</text>
+<rect x="476.9" y="140.4" width="36.5" height="89.6" fill="#6366f1" rx="3"><title>secretion_penalty_coeff
+S_Ti = 0.1343</title></rect>
+<rect x="518.5" y="161.7" width="36.5" height="68.3" fill="#f59e0b" rx="3"><title>secretion_penalty_coeff
+S_i = 0.1024</title></rect>
+<text x="523.8" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 523.8 246)">secretion_penalty_coeff</text>
+<rect x="581.0" y="72.4" width="36.5" height="157.6" fill="#6366f1" rx="3"><title>cell_dry_mass_fraction
+S_Ti = 0.2363</title></rect>
+<rect x="622.7" y="80.1" width="36.5" height="149.9" fill="#f59e0b" rx="3"><title>cell_dry_mass_fraction
+S_i = 0.2249</title></rect>
+<text x="627.9" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 627.9 246)">dry_mass_frac</text>
+<rect x="65" y="38" width="12" height="12" fill="#6366f1" rx="2"/>
+<text x="81" y="48" font-size="11" fill="#e2e8f0">Total (S_Ti)</text>
+<rect x="165" y="38" width="12" height="12" fill="#f59e0b" rx="2"/>
+<text x="181" y="48" font-size="11" fill="#e2e8f0">First (S_i)</text>
+</svg></div><table>
+<thead><tr>
+<th>Rank</th><th>Parameter</th><th>S_Ti (Total)</th>
+<th>S_i (First)</th><th>Interaction</th>
+</tr></thead>
+<tbody>
+<tr><td class="rank">1</td><td><code>basal_elongation_rate</code></td><td><div class="bar-cell"><div class="bar" style="width:29%"></div><span>0.2850</span></div></td>
+<td>0.2515</td><td>0.0335</td>
+</tr>
+<tr><td class="rank">2</td><td><code>rnap_bound</code></td><td><div class="bar-cell"><div class="bar" style="width:25%"></div><span>0.2516</span></div></td>
+<td>0.1754</td><td>0.0763</td>
+</tr>
+<tr><td class="rank">3</td><td><code>dry_mass_frac</code></td><td><div class="bar-cell"><div class="bar" style="width:24%"></div><span>0.2363</span></div></td>
+<td>0.2249</td><td>0.0115</td>
+</tr>
+<tr><td class="rank">4</td><td><code>rnap_free</code></td><td><div class="bar-cell"><div class="bar" style="width:14%"></div><span>0.1362</span></div></td>
+<td>0.0755</td><td>0.0607</td>
+</tr>
+<tr><td class="rank">5</td><td><code>secretion_penalty_coeff</code></td><td><div class="bar-cell"><div class="bar" style="width:13%"></div><span>0.1343</span></div></td>
+<td>0.1024</td><td>0.0319</td>
+</tr>
+<tr><td class="rank">6</td><td><code>kinetic_objective_weight</code></td><td><div class="bar-cell"><div class="bar" style="width:12%"></div><span>0.1153</span></div></td>
+<td>0.0113</td><td>0.1040</td>
+</tr>
+</tbody>
+</table><p style="color:var(--text-dim);font-size:13px;margin:12px 0 0;">Only 1 generation available. Run with more generations to observe how parameter importance evolves across cell divisions.</p></div></details>
+
+<!-- Strategy 3: By Lineage -->
+<details class="accordion"><summary>By Lineage <span class="badge">Strategy 3</span></summary><div class="accordion-body"><p class="section-desc">Sensitivity analysis performed on data aggregated by lineage seed. <strong>1 lineage</strong> analyzed.</p><div class="chart-container"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 320" style="width:100%;max-width:700px;height:auto;">
+<line x1="55" y1="230.0" x2="680" y2="230.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="234.0" text-anchor="end" font-size="11" fill="#94a3b8">0.00</text>
+<line x1="55" y1="190.0" x2="680" y2="190.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="194.0" text-anchor="end" font-size="11" fill="#94a3b8">0.06</text>
+<line x1="55" y1="150.0" x2="680" y2="150.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="154.0" text-anchor="end" font-size="11" fill="#94a3b8">0.12</text>
+<line x1="55" y1="110.0" x2="680" y2="110.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="114.0" text-anchor="end" font-size="11" fill="#94a3b8">0.18</text>
+<line x1="55" y1="70.0" x2="680" y2="70.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="74.0" text-anchor="end" font-size="11" fill="#94a3b8">0.24</text>
+<line x1="55" y1="30.0" x2="680" y2="30.0" stroke="#333355" stroke-width="1"/>
+<text x="47" y="34.0" text-anchor="end" font-size="11" fill="#94a3b8">0.30</text>
+<rect x="60.2" y="139.2" width="36.5" height="90.8" fill="#6366f1" rx="3"><title>fraction_active_rnap_free
+S_Ti = 0.1362</title></rect>
+<rect x="101.9" y="179.6" width="36.5" height="50.4" fill="#f59e0b" rx="3"><title>fraction_active_rnap_free
+S_i = 0.0755</title></rect>
+<text x="107.1" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 107.1 246)">rnap_free</text>
+<rect x="164.4" y="62.2" width="36.5" height="167.8" fill="#6366f1" rx="3"><title>fraction_active_rnap_bound
+S_Ti = 0.2516</title></rect>
+<rect x="206.0" y="113.1" width="36.5" height="116.9" fill="#f59e0b" rx="3"><title>fraction_active_rnap_bound
+S_i = 0.1754</title></rect>
+<text x="211.3" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 211.3 246)">rnap_bound</text>
+<rect x="268.5" y="40.0" width="36.5" height="190.0" fill="#6366f1" rx="3"><title>basal_elongation_rate
+S_Ti = 0.2850</title></rect>
+<rect x="310.2" y="62.3" width="36.5" height="167.7" fill="#f59e0b" rx="3"><title>basal_elongation_rate
+S_i = 0.2515</title></rect>
+<text x="315.4" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 315.4 246)">basal_elongation_rate</text>
+<rect x="372.7" y="153.1" width="36.5" height="76.9" fill="#6366f1" rx="3"><title>kinetic_objective_weight
+S_Ti = 0.1153</title></rect>
+<rect x="414.4" y="222.4" width="36.5" height="7.6" fill="#f59e0b" rx="3"><title>kinetic_objective_weight
+S_i = 0.0113</title></rect>
+<text x="419.6" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 419.6 246)">kinetic_objective_weight</text>
+<rect x="476.9" y="140.4" width="36.5" height="89.6" fill="#6366f1" rx="3"><title>secretion_penalty_coeff
+S_Ti = 0.1343</title></rect>
+<rect x="518.5" y="161.7" width="36.5" height="68.3" fill="#f59e0b" rx="3"><title>secretion_penalty_coeff
+S_i = 0.1024</title></rect>
+<text x="523.8" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 523.8 246)">secretion_penalty_coeff</text>
+<rect x="581.0" y="72.4" width="36.5" height="157.6" fill="#6366f1" rx="3"><title>cell_dry_mass_fraction
+S_Ti = 0.2363</title></rect>
+<rect x="622.7" y="80.1" width="36.5" height="149.9" fill="#f59e0b" rx="3"><title>cell_dry_mass_fraction
+S_i = 0.2249</title></rect>
+<text x="627.9" y="246" text-anchor="end" font-size="11" fill="#e2e8f0" transform="rotate(-35 627.9 246)">dry_mass_frac</text>
+<rect x="65" y="38" width="12" height="12" fill="#6366f1" rx="2"/>
+<text x="81" y="48" font-size="11" fill="#e2e8f0">Total (S_Ti)</text>
+<rect x="165" y="38" width="12" height="12" fill="#f59e0b" rx="2"/>
+<text x="181" y="48" font-size="11" fill="#e2e8f0">First (S_i)</text>
+</svg></div><table>
+<thead><tr>
+<th>Rank</th><th>Parameter</th><th>S_Ti (Total)</th>
+<th>S_i (First)</th><th>Interaction</th>
+</tr></thead>
+<tbody>
+<tr><td class="rank">1</td><td><code>basal_elongation_rate</code></td><td><div class="bar-cell"><div class="bar" style="width:29%"></div><span>0.2850</span></div></td>
+<td>0.2515</td><td>0.0335</td>
+</tr>
+<tr><td class="rank">2</td><td><code>rnap_bound</code></td><td><div class="bar-cell"><div class="bar" style="width:25%"></div><span>0.2516</span></div></td>
+<td>0.1754</td><td>0.0763</td>
+</tr>
+<tr><td class="rank">3</td><td><code>dry_mass_frac</code></td><td><div class="bar-cell"><div class="bar" style="width:24%"></div><span>0.2363</span></div></td>
+<td>0.2249</td><td>0.0115</td>
+</tr>
+<tr><td class="rank">4</td><td><code>rnap_free</code></td><td><div class="bar-cell"><div class="bar" style="width:14%"></div><span>0.1362</span></div></td>
+<td>0.0755</td><td>0.0607</td>
+</tr>
+<tr><td class="rank">5</td><td><code>secretion_penalty_coeff</code></td><td><div class="bar-cell"><div class="bar" style="width:13%"></div><span>0.1343</span></div></td>
+<td>0.1024</td><td>0.0319</td>
+</tr>
+<tr><td class="rank">6</td><td><code>kinetic_objective_weight</code></td><td><div class="bar-cell"><div class="bar" style="width:12%"></div><span>0.1153</span></div></td>
+<td>0.0113</td><td>0.1040</td>
+</tr>
+</tbody>
+</table><p style="color:var(--text-dim);font-size:13px;margin:12px 0 0;">Only 1 lineage seed available. Run with more seeds to assess whether sensitivity depends on stochastic lineage history.</p></div></details>
+
+<!-- Strategy 4: Growth-Stratified -->
+<details class="accordion" id="section-growth">
+  <summary>Growth-Stratified <span class="badge">Strategy 4</span></summary>
+  <div class="accordion-body">
+    <p class="section-desc">
+      S_Ti resolved across 10 cell cycle stages
+      (&theta; = growth progress from birth to division).
+      How does parameter importance evolve within a single cell cycle?
+    </p>
+    <div class="chart-container"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 300" style="width:100%;max-width:700px;height:auto;">
+<text x="122" y="52.33333333333333" text-anchor="end" font-size="11" fill="#e2e8f0">rnap_free</text>
+<rect x="130.0" y="30.0" width="50.0" height="36.7" fill="#472a79"><title>rnap_free @ 0%-10%: 0.1145</title></rect>
+<rect x="180.0" y="30.0" width="50.0" height="36.7" fill="#452e7b"><title>rnap_free @ 10%-20%: 0.1176</title></rect>
+<rect x="230.0" y="30.0" width="50.0" height="36.7" fill="#44337d"><title>rnap_free @ 20%-30%: 0.1206</title></rect>
+<rect x="280.0" y="30.0" width="50.0" height="36.7" fill="#433880"><title>rnap_free @ 30%-40%: 0.1242</title></rect>
+<rect x="330.0" y="30.0" width="50.0" height="36.7" fill="#413d83"><title>rnap_free @ 40%-50%: 0.1279</title></rect>
+<rect x="380.0" y="30.0" width="50.0" height="36.7" fill="#3f4285"><title>rnap_free @ 50%-60%: 0.1314</title></rect>
+<rect x="430.0" y="30.0" width="50.0" height="36.7" fill="#3e4888"><title>rnap_free @ 60%-70%: 0.1356</title></rect>
+<rect x="480.0" y="30.0" width="50.0" height="36.7" fill="#3b4f8a"><title>rnap_free @ 70%-80%: 0.1410</title></rect>
+<rect x="530.0" y="30.0" width="50.0" height="36.7" fill="#37598b"><title>rnap_free @ 80%-90%: 0.1485</title></rect>
+<rect x="580.0" y="30.0" width="50.0" height="36.7" fill="#33618c"><title>rnap_free @ 90%-100%: 0.1545</title></rect>
+<text x="122" y="88.99999999999999" text-anchor="end" font-size="11" fill="#e2e8f0">rnap_bound</text>
+<rect x="130.0" y="66.7" width="50.0" height="36.7" fill="#3ab975"><title>rnap_bound @ 0%-10%: 0.2314</title></rect>
+<rect x="180.0" y="66.7" width="50.0" height="36.7" fill="#45bd6f"><title>rnap_bound @ 10%-20%: 0.2362</title></rect>
+<rect x="230.0" y="66.7" width="50.0" height="36.7" fill="#4dc16a"><title>rnap_bound @ 20%-30%: 0.2394</title></rect>
+<rect x="280.0" y="66.7" width="50.0" height="36.7" fill="#5bc662"><title>rnap_bound @ 30%-40%: 0.2450</title></rect>
+<rect x="330.0" y="66.7" width="50.0" height="36.7" fill="#66ca5c"><title>rnap_bound @ 40%-50%: 0.2495</title></rect>
+<rect x="380.0" y="66.7" width="50.0" height="36.7" fill="#73cf54"><title>rnap_bound @ 50%-60%: 0.2545</title></rect>
+<rect x="430.0" y="66.7" width="50.0" height="36.7" fill="#87d347"><title>rnap_bound @ 60%-70%: 0.2610</title></rect>
+<rect x="480.0" y="66.7" width="50.0" height="36.7" fill="#a1d937"><title>rnap_bound @ 70%-80%: 0.2695</title></rect>
+<rect x="530.0" y="66.7" width="50.0" height="36.7" fill="#c7e029"><title>rnap_bound @ 80%-90%: 0.2819</title></rect>
+<rect x="580.0" y="66.7" width="50.0" height="36.7" fill="#e7e426"><title>rnap_bound @ 90%-100%: 0.2923</title></rect>
+<text x="122" y="125.66666666666666" text-anchor="end" font-size="11" fill="#e2e8f0">basal_elongation_rate</text>
+<rect x="130.0" y="103.3" width="50.0" height="36.7" fill="#8ad446"><title>basal_elongation_rate @ 0%-10%: 0.2618</title></rect>
+<rect x="180.0" y="103.3" width="50.0" height="36.7" fill="#98d73d"><title>basal_elongation_rate @ 10%-20%: 0.2665</title></rect>
+<rect x="230.0" y="103.3" width="50.0" height="36.7" fill="#a7da33"><title>basal_elongation_rate @ 20%-30%: 0.2714</title></rect>
+<rect x="280.0" y="103.3" width="50.0" height="36.7" fill="#b5de2a"><title>basal_elongation_rate @ 30%-40%: 0.2761</title></rect>
+<rect x="330.0" y="103.3" width="50.0" height="36.7" fill="#c0df2a"><title>basal_elongation_rate @ 40%-50%: 0.2798</title></rect>
+<rect x="380.0" y="103.3" width="50.0" height="36.7" fill="#cfe128"><title>basal_elongation_rate @ 50%-60%: 0.2845</title></rect>
+<rect x="430.0" y="103.3" width="50.0" height="36.7" fill="#dce227"><title>basal_elongation_rate @ 60%-70%: 0.2887</title></rect>
+<rect x="480.0" y="103.3" width="50.0" height="36.7" fill="#eae426"><title>basal_elongation_rate @ 70%-80%: 0.2932</title></rect>
+<rect x="530.0" y="103.3" width="50.0" height="36.7" fill="#f9e625"><title>basal_elongation_rate @ 80%-90%: 0.2979</title></rect>
+<rect x="580.0" y="103.3" width="50.0" height="36.7" fill="#fde725"><title>basal_elongation_rate @ 90%-100%: 0.2992</title></rect>
+<text x="122" y="162.33333333333334" text-anchor="end" font-size="11" fill="#e2e8f0">kinetic_objective_weight</text>
+<rect x="130.0" y="140.0" width="50.0" height="36.7" fill="#440154"><title>kinetic_objective_weight @ 0%-10%: 0.0894</title></rect>
+<rect x="180.0" y="140.0" width="50.0" height="36.7" fill="#44085b"><title>kinetic_objective_weight @ 10%-20%: 0.0941</title></rect>
+<rect x="230.0" y="140.0" width="50.0" height="36.7" fill="#451062"><title>kinetic_objective_weight @ 20%-30%: 0.0986</title></rect>
+<rect x="280.0" y="140.0" width="50.0" height="36.7" fill="#46196a"><title>kinetic_objective_weight @ 30%-40%: 0.1038</title></rect>
+<rect x="330.0" y="140.0" width="50.0" height="36.7" fill="#472272"><title>kinetic_objective_weight @ 40%-50%: 0.1092</title></rect>
+<rect x="380.0" y="140.0" width="50.0" height="36.7" fill="#462b79"><title>kinetic_objective_weight @ 50%-60%: 0.1153</title></rect>
+<rect x="430.0" y="140.0" width="50.0" height="36.7" fill="#43367f"><title>kinetic_objective_weight @ 60%-70%: 0.1233</title></rect>
+<rect x="480.0" y="140.0" width="50.0" height="36.7" fill="#3e4788"><title>kinetic_objective_weight @ 70%-80%: 0.1347</title></rect>
+<rect x="530.0" y="140.0" width="50.0" height="36.7" fill="#355d8c"><title>kinetic_objective_weight @ 80%-90%: 0.1518</title></rect>
+<rect x="580.0" y="140.0" width="50.0" height="36.7" fill="#2d708e"><title>kinetic_objective_weight @ 90%-100%: 0.1671</title></rect>
+<text x="122" y="199.0" text-anchor="end" font-size="11" fill="#e2e8f0">secretion_penalty_coeff</text>
+<rect x="130.0" y="176.7" width="50.0" height="36.7" fill="#3d4a89"><title>secretion_penalty_coeff @ 0%-10%: 0.1375</title></rect>
+<rect x="180.0" y="176.7" width="50.0" height="36.7" fill="#3d4a89"><title>secretion_penalty_coeff @ 10%-20%: 0.1373</title></rect>
+<rect x="230.0" y="176.7" width="50.0" height="36.7" fill="#3d4a89"><title>secretion_penalty_coeff @ 20%-30%: 0.1371</title></rect>
+<rect x="280.0" y="176.7" width="50.0" height="36.7" fill="#3d4a89"><title>secretion_penalty_coeff @ 30%-40%: 0.1371</title></rect>
+<rect x="330.0" y="176.7" width="50.0" height="36.7" fill="#3d4989"><title>secretion_penalty_coeff @ 40%-50%: 0.1367</title></rect>
+<rect x="380.0" y="176.7" width="50.0" height="36.7" fill="#3e4888"><title>secretion_penalty_coeff @ 50%-60%: 0.1355</title></rect>
+<rect x="430.0" y="176.7" width="50.0" height="36.7" fill="#3e4687"><title>secretion_penalty_coeff @ 60%-70%: 0.1344</title></rect>
+<rect x="480.0" y="176.7" width="50.0" height="36.7" fill="#3f4486"><title>secretion_penalty_coeff @ 70%-80%: 0.1326</title></rect>
+<rect x="530.0" y="176.7" width="50.0" height="36.7" fill="#413b82"><title>secretion_penalty_coeff @ 80%-90%: 0.1268</title></rect>
+<rect x="580.0" y="176.7" width="50.0" height="36.7" fill="#43357e"><title>secretion_penalty_coeff @ 90%-100%: 0.1221</title></rect>
+<text x="122" y="235.66666666666666" text-anchor="end" font-size="11" fill="#e2e8f0">dry_mass_frac</text>
+<rect x="130.0" y="213.3" width="50.0" height="36.7" fill="#ede526"><title>dry_mass_frac @ 0%-10%: 0.2943</title></rect>
+<rect x="180.0" y="213.3" width="50.0" height="36.7" fill="#c9e029"><title>dry_mass_frac @ 10%-20%: 0.2826</title></rect>
+<rect x="230.0" y="213.3" width="50.0" height="36.7" fill="#aadb31"><title>dry_mass_frac @ 20%-30%: 0.2725</title></rect>
+<rect x="280.0" y="213.3" width="50.0" height="36.7" fill="#84d349"><title>dry_mass_frac @ 30%-40%: 0.2599</title></rect>
+<rect x="330.0" y="213.3" width="50.0" height="36.7" fill="#65ca5c"><title>dry_mass_frac @ 40%-50%: 0.2491</title></rect>
+<rect x="380.0" y="213.3" width="50.0" height="36.7" fill="#4abf6c"><title>dry_mass_frac @ 50%-60%: 0.2381</title></rect>
+<rect x="430.0" y="213.3" width="50.0" height="36.7" fill="#31b37b"><title>dry_mass_frac @ 60%-70%: 0.2257</title></rect>
+<rect x="480.0" y="213.3" width="50.0" height="36.7" fill="#23a385"><title>dry_mass_frac @ 70%-80%: 0.2112</title></rect>
+<rect x="530.0" y="213.3" width="50.0" height="36.7" fill="#22908b"><title>dry_mass_frac @ 80%-90%: 0.1948</title></rect>
+<rect x="580.0" y="213.3" width="50.0" height="36.7" fill="#25848d"><title>dry_mass_frac @ 90%-100%: 0.1847</title></rect>
+<text x="155.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">0%-10%</text>
+<text x="205.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">10%-20%</text>
+<text x="255.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">20%-30%</text>
+<text x="305.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">30%-40%</text>
+<text x="355.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">40%-50%</text>
+<text x="405.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">50%-60%</text>
+<text x="455.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">60%-70%</text>
+<text x="505.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">70%-80%</text>
+<text x="555.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">80%-90%</text>
+<text x="605.0" y="266" text-anchor="middle" font-size="10" fill="#94a3b8">90%-100%</text>
+<rect x="645" y="250.0" width="14" height="12.6" fill="#440154"/>
+<rect x="645" y="238.4" width="14" height="12.6" fill="#451365"/>
+<rect x="645" y="226.8" width="14" height="12.6" fill="#472576"/>
+<rect x="645" y="215.3" width="14" height="12.6" fill="#43357f"/>
+<rect x="645" y="203.7" width="14" height="12.6" fill="#3f4587"/>
+<rect x="645" y="192.1" width="14" height="12.6" fill="#39548a"/>
+<rect x="645" y="180.5" width="14" height="12.6" fill="#33638d"/>
+<rect x="645" y="168.9" width="14" height="12.6" fill="#2d708e"/>
+<rect x="645" y="157.4" width="14" height="12.6" fill="#287c8e"/>
+<rect x="645" y="145.8" width="14" height="12.6" fill="#24898c"/>
+<rect x="645" y="134.2" width="14" height="12.6" fill="#20968a"/>
+<rect x="645" y="122.6" width="14" height="12.6" fill="#23a385"/>
+<rect x="645" y="111.1" width="14" height="12.6" fill="#2eaf7e"/>
+<rect x="645" y="99.5" width="14" height="12.6" fill="#3eba73"/>
+<rect x="645" y="87.9" width="14" height="12.6" fill="#58c564"/>
+<rect x="645" y="76.3" width="14" height="12.6" fill="#75cf53"/>
+<rect x="645" y="64.7" width="14" height="12.6" fill="#97d73d"/>
+<rect x="645" y="53.2" width="14" height="12.6" fill="#b8de2a"/>
+<rect x="645" y="41.6" width="14" height="12.6" fill="#dae227"/>
+<rect x="645" y="30.0" width="14" height="12.6" fill="#fde725"/>
+<text x="663" y="40" font-size="10" fill="#94a3b8">0.299</text>
+<text x="663" y="250" font-size="10" fill="#94a3b8">0.089</text>
+<text x="652.0" y="20" text-anchor="middle" font-size="10" fill="#94a3b8">S_Ti</text>
+</svg></div>
+    <div style="overflow-x:auto;margin-top:16px;"><table class="stage-table">
+<thead><tr><th>Parameter</th>
+<th>0%-10%</th>
+<th>10%-20%</th>
+<th>20%-30%</th>
+<th>30%-40%</th>
+<th>40%-50%</th>
+<th>50%-60%</th>
+<th>60%-70%</th>
+<th>70%-80%</th>
+<th>80%-90%</th>
+<th>90%-100%</th>
+<th>Trend</th></tr></thead><tbody>
+<tr><td><code>rnap_free</code></td>
+<td style="background:#440154;color:#fff;text-align:center">0.114</td>
+<td style="background:#461c6d;color:#fff;text-align:center">0.118</td>
+<td style="background:#44347e;color:#fff;text-align:center">0.121</td>
+<td style="background:#3b4e89;color:#fff;text-align:center">0.124</td>
+<td style="background:#30688e;color:#fff;text-align:center">0.128</td>
+<td style="background:#287d8e;color:#fff;text-align:center">0.131</td>
+<td style="background:#20978a;color:#fff;text-align:center">0.136</td>
+<td style="background:#34b679;color:#1a1a2e;text-align:center">0.141</td>
+<td style="background:#9bd83a;color:#1a1a2e;text-align:center">0.148</td>
+<td style="background:#fde725;color:#1a1a2e;text-align:center">0.155</td>
+<td class="trend-up">&#x2197; +0.040</td></tr>
+<tr><td><code>rnap_bound</code></td>
+<td style="background:#440154;color:#fff;text-align:center">0.231</td>
+<td style="background:#461c6d;color:#fff;text-align:center">0.236</td>
+<td style="background:#462e7b;color:#fff;text-align:center">0.239</td>
+<td style="background:#3d4989;color:#fff;text-align:center">0.245</td>
+<td style="background:#355d8c;color:#fff;text-align:center">0.249</td>
+<td style="background:#2c728e;color:#fff;text-align:center">0.254</td>
+<td style="background:#238c8c;color:#fff;text-align:center">0.261</td>
+<td style="background:#2cad7e;color:#1a1a2e;text-align:center">0.270</td>
+<td style="background:#8ed543;color:#1a1a2e;text-align:center">0.282</td>
+<td style="background:#fde725;color:#1a1a2e;text-align:center">0.292</td>
+<td class="trend-up">&#x2197; +0.061</td></tr>
+<tr><td><code>basal_elongation_rate</code></td>
+<td style="background:#440154;color:#fff;text-align:center">0.262</td>
+<td style="background:#462c7a;color:#fff;text-align:center">0.266</td>
+<td style="background:#39528a;color:#fff;text-align:center">0.271</td>
+<td style="background:#2c738e;color:#fff;text-align:center">0.276</td>
+<td style="background:#238a8c;color:#fff;text-align:center">0.280</td>
+<td style="background:#29a981;color:#1a1a2e;text-align:center">0.285</td>
+<td style="background:#4fc169;color:#1a1a2e;text-align:center">0.289</td>
+<td style="background:#95d63e;color:#1a1a2e;text-align:center">0.293</td>
+<td style="background:#e6e426;color:#1a1a2e;text-align:center">0.298</td>
+<td style="background:#fde725;color:#1a1a2e;text-align:center">0.299</td>
+<td class="trend-up">&#x2197; +0.037</td></tr>
+<tr><td><code>kinetic_objective_weight</code></td>
+<td style="background:#440154;color:#fff;text-align:center">0.089</td>
+<td style="background:#461567;color:#fff;text-align:center">0.094</td>
+<td style="background:#472a79;color:#fff;text-align:center">0.099</td>
+<td style="background:#413e83;color:#fff;text-align:center">0.104</td>
+<td style="background:#3a528a;color:#fff;text-align:center">0.109</td>
+<td style="background:#31678d;color:#fff;text-align:center">0.115</td>
+<td style="background:#26808e;color:#fff;text-align:center">0.123</td>
+<td style="background:#24a485;color:#fff;text-align:center">0.135</td>
+<td style="background:#7dd14e;color:#1a1a2e;text-align:center">0.152</td>
+<td style="background:#fde725;color:#1a1a2e;text-align:center">0.167</td>
+<td class="trend-up">&#x2197; +0.078</td></tr>
+<tr><td><code>secretion_penalty_coeff</code></td>
+<td style="background:#fde725;color:#1a1a2e;text-align:center">0.138</td>
+<td style="background:#f3e525;color:#1a1a2e;text-align:center">0.137</td>
+<td style="background:#e8e426;color:#1a1a2e;text-align:center">0.137</td>
+<td style="background:#eae426;color:#1a1a2e;text-align:center">0.137</td>
+<td style="background:#d9e227;color:#1a1a2e;text-align:center">0.137</td>
+<td style="background:#a6da34;color:#1a1a2e;text-align:center">0.135</td>
+<td style="background:#78d051;color:#1a1a2e;text-align:center">0.134</td>
+<td style="background:#3bb975;color:#1a1a2e;text-align:center">0.133</td>
+<td style="background:#345f8c;color:#fff;text-align:center">0.127</td>
+<td style="background:#440154;color:#fff;text-align:center">0.122</td>
+<td class="trend-down">&#x2198; -0.015</td></tr>
+<tr><td><code>dry_mass_frac</code></td>
+<td style="background:#fde725;color:#1a1a2e;text-align:center">0.294</td>
+<td style="background:#b8de2a;color:#1a1a2e;text-align:center">0.283</td>
+<td style="background:#7cd14e;color:#1a1a2e;text-align:center">0.272</td>
+<td style="background:#3fbb73;color:#1a1a2e;text-align:center">0.260</td>
+<td style="background:#25a584;color:#fff;text-align:center">0.249</td>
+<td style="background:#238c8c;color:#fff;text-align:center">0.238</td>
+<td style="background:#2c718e;color:#fff;text-align:center">0.226</td>
+<td style="background:#3b4e89;color:#fff;text-align:center">0.211</td>
+<td style="background:#472172;color:#fff;text-align:center">0.195</td>
+<td style="background:#440154;color:#fff;text-align:center">0.185</td>
+<td class="trend-down">&#x2198; -0.110</td></tr>
+</tbody></table></div>
+  </div>
+</details>
+
+
+<div class="strategy-divider" id="section-explorer">Interactive PCE Explorer</div>
+
+<div class="section">
+  <h2>Surrogate Predictor <span class="badge">Interactive</span></h2>
+  <p class="section-desc">
+    Drag parameter sliders to evaluate the fitted PCE surrogate in real time.
+    Predicted observable values update instantly &mdash; no simulation required.
+    Use this to explore "what if" scenarios: tune parameters until the predicted
+    outputs match a desired cell state.
+  </p>
+  
+<div class="explorer-controls">
+  <button id="pce-reset">Reset to Midpoint</button>
+  <button id="pce-select-all">Select All</button>
+  <button id="pce-select-none" style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);">Clear</button>
+</div>
+<div class="obs-toggles" id="pce-obs-toggles"></div>
+<div class="explorer-grid">
+  <div class="slider-panel" id="pce-sliders"></div>
+  <div class="pred-panel">
+    <div class="pred-readout" id="pce-readout"></div>
+    <div class="profile-chart"><h3>Predicted Observable Profile Across Cell Cycle</h3><svg id="pce-profile-svg" viewBox="0 0 560 200" style="width:100%;max-width:560px;height:auto;"></svg></div>
+  </div>
+</div>
+</div>
+
+
+<!-- Provenance -->
+<div class="section" id="section-provenance">
+  <h2>Provenance</h2>
+  <div class="info-grid">
+    <div class="key">Timestamp</div><div class="val">May 06, 2026 at 16:50 UTC</div><div class="key">Host</div><div class="val">LT-0919656</div><div class="key">Samples</div><div class="val">10</div><div class="key">CLI Command</div><div class="val"><code>/Users/alexanderpatrie/sms/uqEcoli/.venv/bin/uq quantify /Users/alexanderpatrie/sms/uqEcoli/sim_data/baseline/kb/simData.cPickle --cache-dir ./uq_cache_e2e --export-path ./uq_results_fresh</code></div><div class="key">Git (uqEcoli)</div><div class="val"><code>2cb836fbdc82</code></div><div class="key">Git (vEcoli)</div><div class="val"><code>67e3b1c3b05d</code></div><div class="key">pytuq</div><div class="val"><code>1.0.0</code></div><div class="key">numpy</div><div class="val"><code>2.4.3</code></div><div class="key">polars</div><div class="val"><code>1.39.3</code></div><div class="key">scipy</div><div class="val"><code>1.17.1</code></div>
+  </div>
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:13px;color:var(--text-dim);">
+    <strong style="color:var(--text);">Documentation:</strong>
+    <a href="https://vivarium-collective.github.io/uqEcoli/" style="color:var(--accent-light);" target="_blank">Sphinx API Reference</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://vivarium-collective.github.io/uqEcoli/demo/" style="color:var(--accent-light);" target="_blank">Demo Site</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://github.com/vivarium-collective/uqEcoli" style="color:var(--accent-light);" target="_blank">GitHub Repo</a>
+  </div>
+</div>
+
+<div class="footer">
+  Generated from /Users/alexanderpatrie/sms/uqEcoli/uq_results_fresh
+</div>
+
+</div>
+
+<script>
+(function() {
+  const S = {"pop_coeffs": [[335.4855274774136, 46.752441758346876, -72.59625996715445, -82.27943003055489, 17.703603635078483, -42.76167037537255, -14.989141214647198, -8.052578463957955, 52.351168780933904, -36.478102679928284, -52.316125563592436, 6.078020690199415, -4.961942192756198, -11.82398064569084, -4.826317828886941, -74.03486602765335, 11.150144104545035, -3.030123673127657, -36.31193632175417, 32.76398865891892, 35.96369042952492, 6.037265883119528, 17.662904646411747, 39.34983319248941, 31.745692600623826, -36.748503683178626, 14.431411482185759, 89.44054527992795], [1136.9140909990733, 161.93999021295068, -239.32092213005086, -278.3539977887414, 54.767946964897675, -142.36096121460866, -158.46950212740038, -29.026206759313293, 162.93071706983483, -97.34119932901685, -161.25210018372778, 33.58184851516589, -14.465812101651139, -87.91320929709433, 1.3630974350632046, -225.01877897022578, 48.75281084494657, 16.086033978131262, -137.89477457114393, 103.51365559296983, 120.61663133263907, 15.791487523800928, 38.58059442555048, 112.62679047764023, 91.78038493136945, -164.5613300536613, 53.1567569008281, 304.37401140308253], [1.0335582645446115, 0.14721817292086437, -0.21756447466368262, -0.2530490888988558, 0.04978904269536156, -0.12941905564964434, -0.1440631837521821, -0.026387460690284845, 0.1481188336998497, -0.08849199939001522, -0.14659281834884338, 0.030528953195605325, -0.013150738274228291, -0.0799210993609946, 0.0012391794864210646, -0.20456252633656882, 0.04432073713176955, 0.014623667252846565, -0.12535888597376726, 0.09410332326633622, 0.10965148302967181, 0.014355897748909937, 0.035073267659591324, 0.10238799134330936, 0.08343671357397216, -0.14960120913969194, 0.048324324455298, 0.2767036467300752], [0.08635910163569059, 0.014835633865821306, -0.016226606605375313, -0.020733883645677395, 0.003750582729230438, -0.009585297077850117, -0.004489542875500636, -0.0005980897326314672, 0.015179635593575191, -0.011531766204740035, -0.014705543869329625, 0.0016414768863243364, -0.0019288569295512587, -0.0008009087089382659, -0.0036015398744213716, -0.01928838000451953, 0.004356749054783525, -0.0004254439747759251, -0.008298809685984884, 0.0094998428590008, 0.008435876969996913, 0.0006982581378832552, 0.0022532403835602466, 0.007907695772366498, 0.006855330571348878, -0.013261100696857396, 0.003686441092463713, 0.022533440222155733], [0.00018279457161200302, 3.173673606665846e-05, -3.4061638479310103e-05, -4.38949936801439e-05, 7.620263164748302e-06, -2.020881762424053e-05, -1.6833624576473273e-05, -1.5503386163903953e-06, 3.092712502640321e-05, -2.257198631589489e-05, -3.0133614756950804e-05, 4.314358771659602e-06, -4.108526666784797e-06, -5.189341558478358e-06, -6.199565674927772e-06, -3.9063469793699557e-05, 9.914712002131563e-06, 8.166791669064689e-07, -1.865465199477549e-05, 1.9433647000438297e-05, 1.783363891956123e-05, 1.1631946818532434e-06, 3.615806346120077e-06, 1.5375775670590744e-05, 1.3602721469552626e-05, -3.05610017390604e-05, 8.096674205056562e-06, 4.753515431023304e-05]], "multi_indices": [[0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0], [0, 0, 1, 0, 0, 0], [0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 1], [2, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0], [1, 0, 1, 0, 0, 0], [1, 0, 0, 1, 0, 0], [1, 0, 0, 0, 1, 0], [1, 0, 0, 0, 0, 1], [0, 2, 0, 0, 0, 0], [0, 1, 1, 0, 0, 0], [0, 1, 0, 1, 0, 0], [0, 1, 0, 0, 1, 0], [0, 1, 0, 0, 0, 1], [0, 0, 2, 0, 0, 0], [0, 0, 1, 1, 0, 0], [0, 0, 1, 0, 1, 0], [0, 0, 1, 0, 0, 1], [0, 0, 0, 2, 0, 0], [0, 0, 0, 1, 1, 0], [0, 0, 0, 1, 0, 1], [0, 0, 0, 0, 2, 0], [0, 0, 0, 0, 1, 1], [0, 0, 0, 0, 0, 2]], "bounds": [[0.25, 0.47], [0.12, 0.22], [15.0, 28.0], [5e-08, 5e-07], [0.0005, 0.005], [0.25, 0.35]], "gs_coeffs": [[277.3214292007354, 37.7671450422127, -59.45572346241565, -67.83380305034999, 14.731162905943707, -34.940398045341304, -28.774687610175267, -6.385822729074242, 41.70178094244729, -26.127777845986504, -40.460037049170964, 7.326848011947662, -3.356003360677793, -16.41981428986617, -1.5735576917912741, -57.245413839786295, 11.416833995836237, 1.3979503592647473, -31.858642323205622, 26.280471762572873, 29.500540328137216, 4.743044388013471, 10.464307798828026, 28.857021968586157, 23.752379037687536, -37.121868192476, 12.858771457334614, 74.37367752510798], [944.1317073663599, 130.5007977991104, -196.3433499985506, -229.29841964592504, 45.662680941695385, -115.99478203552962, -186.32928381345417, -23.74034843814501, 130.34749059950852, -66.57930460511338, -122.89072547533011, 35.64209615587102, -8.258490505563032, -94.98461878923086, 8.380630882609344, -173.40237332780154, 46.89917471705386, 26.540372838283464, -121.6755067482108, 83.87537734346964, 98.84483776129468, 12.074349810627135, 16.947350338835957, 82.62362849545762, 66.86211641664703, -159.06870984650286, 46.69981455865933, 257.98141515980205], [0.8583015521512367, 0.1186370889082825, -0.1784939545441368, -0.20845310876902287, 0.041511528128813875, -0.10544980185048115, -0.16939025801223118, -0.021582134943768264, 0.11849771872682616, -0.060526640550103275, -0.11171884134120899, 0.03240190559624638, -0.007507718641420858, -0.0863496534447552, 0.007618755347826477, -0.15763852120709226, 0.04263561337913991, 0.02412761167116676, -0.11061409704382781, 0.07625034303951798, 0.08985894341935875, 0.010976681646024672, 0.015406682126214034, 0.07511238954132525, 0.06078374219695179, -0.14460791804227557, 0.04245437687150865, 0.23452855923618407], [0.055675319041388296, 0.010911865256431008, -0.010199283655535135, -0.01449759355527444, 0.0016908986350010224, -0.006313725380282404, -0.0020922237522129124, -0.001500304882870195, 0.008702975144933425, -0.007202162636157203, -0.00905341774798634, 0.0006765288204609947, -0.0006779382558471517, -0.0012011833718766512, -0.001453365983950286, -0.01259117699058491, 0.0016525110846368051, 1.634837213425335e-05, -0.005493861212332519, 0.0055464346759587285, 0.00565276736798554, -0.00012843879498743876, 0.0028065750674876205, 0.006725589753083195, 0.004617487786933678, -0.00635451699917465, 0.002436104793007926, 0.014421641504269733], [0.00014308083144365272, 2.793535023495643e-05, -2.6298084954574735e-05, -3.733268186843318e-05, 4.44477199491845e-06, -1.6294230272536835e-05, -2.9979967187670333e-06, -3.777357561297501e-06, 2.2720359940205916e-05, -1.9079127345626118e-05, -2.359786363452292e-05, 1.4559950710207728e-06, -1.6987381005733497e-06, -2.0175448363333707e-06, -4.133048506153011e-06, -3.2949393638808736e-05, 3.9686260993035075e-06, -4.628642389192509e-07, -1.3762261528337682e-05, 1.4443928629964221e-05, 1.4570549481560854e-05, -2.442727830831093e-07, 7.696731367739839e-06, 1.7774374744476013e-05, 1.21650918092237e-05, -1.543310189752785e-05, 6.181208906357891e-06, 3.703735168238177e-05], [289.63071733382435, 39.346944899255924, -62.43538733014054, -70.86484681999623, 15.624045950585774, -36.53769686728422, -26.55650297359711, -6.660218557817427, 43.964711697316645, -28.138309939681307, -42.75134725406246, 7.259491691146069, -3.6404935936925598, -15.595619828681247, -2.166040737678666, -60.59651608841626, 11.63155022272246, 0.5006039832113518, -32.78426024618777, 27.637585848486907, 30.825456485165105, 5.138034035267273, 11.592981309141916, 30.7790521483214, 25.430893912502608, -37.45424419112403, 13.34391122861976, 77.58761696523672], [984.9426510301637, 135.95317547109033, -206.05208506896085, -239.61239544606798, 48.46551417018184, -121.4289563636738, -182.70164371114004, -24.631000235475536, 137.29989849948956, -72.42870640490686, -130.17854785436174, 35.84280350792089, -9.23027877482307, -93.97995411523848, 7.202283157048064, -183.6762762746892, 48.0845276375344, 24.546996277176, -125.07335351930892, 88.02800058419068, 103.33680850210747, 13.24919000084428, 20.20718251906842, 88.12055900366359, 71.97636033028232, -161.48412069491226, 48.52747363559483, 268.0685008431823], [0.8954024100274216, 0.1235937958828094, -0.1873200773354189, -0.21782945040551624, 0.04405955833652928, -0.1103899603306125, -0.16609240337376313, -0.02239181839588706, 0.12481808954499049, -0.06584427854991583, -0.1183441344130561, 0.0325843668253823, -0.008391162522566623, -0.08543632192294383, 0.006547530142770883, -0.16697843297699028, 0.043713206943213, 0.022315451161069, -0.11370304865391669, 0.08002545507653716, 0.0939425531837343, 0.012044718182585812, 0.018370165926425413, 0.08010959909423972, 0.06543305484571095, -0.14680374608628385, 0.04411588512326811, 0.24369863713016565], [0.07025994896294323, 0.015563899247932273, -0.011288632343785975, -0.01821445494318687, 0.00189918134502173, -0.007225715937848738, -0.006569363109708647, -0.000735797438205191, 0.011555923757501868, -0.009855404464499947, -0.012513715889002627, 0.0011873810242726361, -0.0017820675927769333, -0.0020798218908982895, -0.0024400653410774063, -0.015446289480456525, 0.0033947675413317437, 0.0012286885458194653, -0.00647580982986136, 0.007265229650491575, 0.006937615814141884, -0.0007429625674656166, 0.0022613773821628428, 0.005974885543635882, 0.0047736725381180515, -0.011855193544089777, 0.003486752189225173, 0.016457206306791396], [0.00017317133157295088, 3.8326196245047636e-05, -2.7852252465602064e-05, -4.496850834732949e-05, 4.727766692544422e-06, -1.785474081693423e-05, -1.5356719206838022e-05, -1.7415930402938293e-06, 2.8621514194480217e-05, -2.4524069478929406e-05, -3.100978890841789e-05, 2.8218691280396994e-06, -4.393904162301087e-06, -4.749651362176644e-06, -6.141492569176957e-06, -3.8292551042363065e-05, 8.28915023260495e-06, 2.8714987318043896e-06, -1.577927559413299e-05, 1.797507535256896e-05, 1.7142554989884808e-05, -1.7875368284173768e-06, 5.770356825282112e-06, 1.4857599486939552e-05, 1.1885539153180479e-05, -2.8928888704192917e-05, 8.598335216688793e-06, 4.0438542941207816e-05], [301.7372853272414, 40.89844717850421, -65.00687262200113, -73.93078826781031, 16.468343171222756, -38.14340079045284, -24.250411931327182, -6.906210476874136, 46.34523165980608, -30.127896209224755, -44.97024007402064, 7.158344427615793, -3.610541525947431, -14.677535672921948, -2.8944727031017328, -64.0462068287768, 11.633715728691994, -0.08499535897023007, -33.72717851542459, 29.086596799439906, 32.13872440127036, 5.326523758513582, 12.798274522500074, 32.82929420406159, 26.709446432183288, -37.70492370422614, 13.705866250938818, 80.91926708907447], [1025.2266000451082, 141.30271066293662, -214.473601584867, -250.0406005317354, 51.24248585187789, -126.81000326347677, -178.88232015066393, -25.428942594063223, 144.68936193805385, -78.22663079735294, -137.19661495447377, 35.99226377069351, -9.158367203632848, -92.63178405459394, 5.543737220789677, -194.29195444284463, 48.64086322975891, 23.5529066691619, -128.54843994621342, 92.49785510281927, 107.74910346935266, 13.736290132972583, 23.61673955844774, 93.97986757053638, 75.77736768663631, -163.77166986379723, 50.00867625717049, 278.6165734625196], [0.9320241818591894, 0.12845700969357918, -0.19497600144078817, -0.22730963684703248, 0.046584078047162004, -0.11528182114861538, -0.1626202910460579, -0.02311722054005776, 0.13153578358004883, -0.07111511890668466, -0.12472419541315806, 0.03272023979153953, -0.008325788366938926, -0.08421071277690367, 0.005039761109808836, -0.1766290494934952, 0.04421896657250819, 0.021411733335601785, -0.11686221813292114, 0.08408895918438114, 0.09795373042668434, 0.012487536484520409, 0.021469763234952397, 0.08543624324594212, 0.06888851607876012, -0.14888333623981567, 0.04546243296106413, 0.25328779405683577], [0.07737936196602388, 0.01952852745615898, -0.013239856293542514, -0.01886756756461358, -0.004090078360264994, -0.007990517370405096, -0.0013981414249133206, 0.0002465806152855995, 0.011403032207160128, -0.011124852427656762, -0.01637957859652036, -0.00042788207703913693, -0.004864585364789597, -0.0029523936075838597, -0.002301519078636093, -0.016909136857596277, 0.0016321472446719078, -0.0017196831063960494, -0.00793277424362846, 0.007444784031212818, 0.008055915715721304, 0.00086929274492898, 0.006879952333456072, 0.009605754597601298, 0.010703369664974899, -0.009349626054750516, 0.0034056490715539244, 0.01782031737514017], [0.00018296202279801876, 4.629881750864658e-05, -3.131717929241067e-05, -4.462529483696523e-05, -9.788786720778565e-06, -1.89145808313598e-05, -4.525821909453254e-06, 5.8369108194805e-07, 2.6739060566941002e-05, -2.6030768264926282e-05, -3.866192874697149e-05, -8.71513065218266e-07, -1.1622013404556461e-05, -7.569725269113582e-06, -5.172836726374292e-06, -3.966646240760334e-05, 4.0525587758771975e-06, -3.8496941906413175e-06, -1.890879573740205e-05, 1.7458157850401012e-05, 1.905436171035138e-05, 2.0497629865639597e-06, 1.6113375038497097e-05, 2.2402272124524225e-05, 2.5276544232082618e-05, -2.25512169337289e-05, 8.115533499742394e-06, 4.195087783221772e-05], [314.4902911353787, 42.49882812266985, -68.19422959179732, -77.01880663801987, 17.065698663301646, -39.93604774521891, -21.272074691393353, -6.952825969834451, 48.77390184820079, -32.394185890488025, -47.66548523197824, 6.917309047472797, -4.14865395801249, -13.650400625475061, -3.581329573687051, -67.59444084187288, 11.809355253693818, -1.2495694442932086, -34.51296258007608, 30.568468584417076, 33.63496802446952, 5.97495598107752, 14.198541067074755, 34.903256482405034, 28.804250035795135, -37.8549328763046, 14.18368994678916, 84.05515001767421], [1067.5220741028265, 146.9296266676958, -224.87190598402276, -260.6722981648853, 52.91901475523721, -132.87463216800714, -172.89401219016037, -25.45760169280363, 152.15268220871138, -84.86169029372628, -145.85087233770403, 35.687771147689574, -10.943731382359253, -91.03002550754637, 4.141646288281336, -205.17212732691215, 49.745329377893114, 20.692323651545795, -131.4897141496082, 96.99828875781394, 112.78865461300902, 15.757516601432522, 27.870120502086266, 99.93572248357327, 82.42332401007927, -165.61931189747438, 51.89849697683128, 288.27914161470426], [0.9704746128207511, 0.13357238787972353, -0.20442900544002085, -0.2369748165135322, 0.04810819523203353, -0.12079512015273408, -0.1571763747183277, -0.02314327426618502, 0.13832062018973745, -0.07714699117611432, -0.1325917021251854, 0.03244342831608174, -0.009948846711235419, -0.08275456864322403, 0.003765132989346962, -0.18652011575173816, 0.04522302670717572, 0.018811203319587057, -0.1195361037723715, 0.0881802625071033, 0.10253514055728077, 0.014325015092211273, 0.025336473183715055, 0.09085065680324834, 0.07493029455461771, -0.15056301081588544, 0.0471804517971191, 0.2620719469224583], [0.08650179468755075, 0.020732469168938072, -0.017733065766142232, -0.017866322373953195, 0.000566036451962537, -0.01239219654708569, -0.0043750594097700015, -0.0021795242552850418, 0.012309775613911179, -0.013746843664338822, -0.021478180631168024, -0.0007436004775577253, -0.011140188692871656, -0.0039805598779703065, -0.0023438768051852565, -0.018952381765070355, 0.005752218628903177, -0.003410028714705926, -0.009651975467384121, 0.0076153514066515, 0.009671477763888632, 0.0011724171792189145, 0.006337785269065998, 0.005081622494674295, 0.009752589105707508, -0.013242714121343903, 0.0009463697832399844, 0.01629644913724856], [0.00019626682390443714, 4.7528238539711824e-05, -4.008329692911305e-05, -4.053197263436698e-05, 1.0243822230140913e-06, -2.8021861885848134e-05, -1.3474959007054175e-05, -5.141168256116423e-06, 2.723751829667396e-05, -3.039312919234634e-05, -4.8402070141259515e-05, -1.3298607477163586e-06, -2.5505526841467652e-05, -1.0796985438831013e-05, -4.5913975357592065e-06, -4.214151153597712e-05, 1.3399386956417502e-05, -6.9880635765312346e-06, -2.2443115467606012e-05, 1.6872491122535307e-05, 2.1921253619707374e-05, 2.4638346242321495e-06, 1.394224011444726e-05, 1.0832481872088885e-05, 2.1811995325376055e-05, -3.1257190379734495e-05, 2.301797810809702e-06, 3.6705631695821345e-05], [327.86537137881623, 44.26066301105474, -71.29203335074861, -80.18595944334342, 18.23770218658269, -41.73371350321181, -18.490923367951623, -7.391018984790818, 51.36522557070521, -34.76415214878045, -50.249912245747396, 6.764709691345482, -4.483174477504435, -12.479790741646859, -4.439807373897264, -71.42031609400223, 12.019037442858234, -2.220876890796497, -35.542497197888416, 32.130727743424494, 35.05016365774106, 6.250992945836826, 15.401678830828056, 36.97556445098778, 30.31480929696647, -38.16839087696014, 14.49865775822214, 87.6568656877549], [1111.9441458786696, 153.12680773086387, -234.97122708672566, -271.4650377138057, 56.70750377110215, -138.938293319024, -167.78703888557357, -26.91186135281607, 160.12800331501126, -91.9077060287505, -154.18334958515803, 35.62835335971688, -12.206168123011068, -89.07915816244696, 2.1596411867507825, -216.97882048884847, 50.97875489270716, 18.526106168858473, -135.25409216116293, 101.77724659044566, 117.59885619908955, 16.49952255639202, 31.37971552124917, 105.78834516091757, 86.96984838543972, -168.1759562464695, 53.22800381982927, 299.4786408666385], [1.0108583144351548, 0.13920618884624006, -0.21361020644247813, -0.2467863979216415, 0.05155227615554717, -0.12630753938093076, -0.15253367171415783, -0.024465328502560384, 0.14557091210455547, -0.08355246002613681, -0.14016668144105285, 0.03238941214519707, -0.011096516475464864, -0.08098105287495191, 0.0019633101697735097, -0.1972534731716805, 0.046344322629733606, 0.016841914698962047, -0.1229582656010574, 0.09252476962767782, 0.10690805109008152, 0.014999565960356454, 0.028527014110226772, 0.09617122287356174, 0.07906349853221828, -0.15288723295133566, 0.04838909438166293, 0.2722533098787625], [0.09524958242933614, 0.019264001453220495, -0.016667030638488962, -0.0209933750389664, 0.007657910928291216, -0.009414835188961255, -0.012189335236686034, -0.0044446193504460016, 0.015117572475047329, -0.011443365271462565, -0.015589277449920275, 0.003136644515715082, -0.0030813753163427397, -0.0036097274620068044, -0.0035185214766264793, -0.021008867108019823, 0.005590506747767128, 0.0009418009937634345, -0.013266856611687763, 0.008794328968451021, 0.00753150781314354, -0.0029061418850222643, 0.002235824661653794, 0.0064369532506145044, 0.0037318985122339254, -0.017226864844671078, 0.0024448242133896566, 0.025502564204829797], [0.00020768381265199183, 4.231046566348013e-05, -3.5979232929190234e-05, -4.5460577664387694e-05, 1.6615202771923607e-05, -2.0319888920908337e-05, -3.283285178672035e-05, -1.0130712262061539e-05, 3.195953247880027e-05, -2.351206812877157e-05, -3.313194863039139e-05, 7.4165274927769726e-06, -6.899499063513105e-06, -1.0876540626387948e-05, -6.640275574052405e-06, -4.433633612010607e-05, 1.2660238322974444e-05, 3.5334617906310898e-06, -2.9912939825217505e-05, 1.8707953390079515e-05, 1.640308788340999e-05, -6.679566482576556e-06, 3.698887216828812e-06, 1.291572399425574e-05, 7.077240198888836e-06, -3.983299299554297e-05, 5.471638402524217e-06, 5.578973943253606e-05], [341.8533032152699, 46.06487559370802, -74.56683240472451, -83.70889458877842, 19.134619375114728, -43.43325542290134, -15.233832820064338, -7.624575030807833, 54.08327726552538, -37.15466071026568, -52.80041001579977, 6.645208494159316, -4.567589597765738, -11.163519449320102, -5.287996384403717, -75.39543996783843, 12.078561512867767, -3.3288611708323157, -36.52048595490338, 33.76669177634225, 36.497411508629746, 6.673053842125448, 16.792656954450486, 39.46457407328925, 32.2993467098606, -38.2459559992885, 15.071536692652975, 91.53070482457571], [1158.3956153183794, 159.3929971425644, -245.6553229265674, -283.48185389178957, 59.57143428528246, -144.71730251153537, -161.35656948334238, -27.629020467271264, 168.53003605977165, -98.93018975835889, -162.35754680073163, 35.74734646690357, -12.570217097405028, -86.7182807277206, 0.2591616439888138, -229.22306951058783, 51.77760680310606, 15.987124554442488, -138.8679199572073, 106.78948591943549, 122.51243736868297, 17.73352710907996, 35.462728742685464, 112.94212279755452, 93.05619395421101, -170.0482131930335, 55.42572646344881, 311.55233628745066], [1.053086923016709, 0.1449027246750588, -0.2233230208423341, -0.2577107762652634, 0.054155849350256774, -0.13156118410139578, -0.14668779043940153, -0.025117291333882814, 0.15320912369070164, -0.08993653614396291, -0.14759776981884726, 0.032497587697184936, -0.01142747008855012, -0.078834800661564, 0.0002356014945352687, -0.20838460864598923, 0.04707055163918722, 0.014533749594947451, -0.126243563597461, 0.09708135083585054, 0.1113749430624392, 0.01612138828098195, 0.03223884431153253, 0.10267465708868612, 0.08459653995837407, -0.15458928472093938, 0.0503870240576809, 0.283229396624955], [0.09673462465674841, 0.016854259152875656, -0.01784024643786562, -0.022222093237197503, 0.0023056607771872973, -0.010869808295025925, -0.010225997892687497, -0.0006899893225183262, 0.01659639804082402, -0.009654004122340198, -0.014843147825652356, 0.004133597569245553, -0.0006935983407572816, -0.001958385508837906, -0.0036452599739196638, -0.020116567011033353, 0.00625604452942634, -0.00017223498642813831, -0.013137798252494235, 0.009663980396780944, 0.007456059973041764, -0.00033593613913386367, 0.0019213145740288298, 0.007756107117895394, 0.007277647290244159, -0.01622430116116339, 0.002502575738417527, 0.02782363520788093], [0.0002024337270205578, 3.545409546900541e-05, -3.689544932269876e-05, -4.6277419984733546e-05, 4.504903084031965e-06, -2.2422382311932735e-05, -2.9887456277696107e-05, -1.735922478945782e-06, 3.3420125142810585e-05, -1.804923216944759e-05, -2.980634882921151e-05, 9.557518447644602e-06, -1.4264269522257749e-06, -8.219998589062416e-06, -6.118630462133824e-06, -4.005993879574059e-05, 1.3666449319125901e-05, 1.6887278083436632e-06, -2.881286046437045e-05, 1.956979068828604e-05, 1.55726165308738e-05, -1.0425417224612525e-06, 2.6050010551091793e-06, 1.4831036262890078e-05, 1.4088351486028916e-05, -3.695186087362172e-05, 5.6267300792812685e-06, 5.8427427863251266e-05], [356.35952475905395, 47.75927391971969, -78.00133881813753, -87.11303350574848, 20.11140849600532, -45.43580039952668, -11.65933009694263, -7.880604758028021, 56.96755108537944, -39.75323455070955, -55.70479550524414, 6.349730575126077, -4.94571055209553, -9.817203132591557, -6.255890531074502, -79.58676642177366, 12.12115848084758, -4.511853303117737, -37.52589579615247, 35.55451789295629, 38.142469791810136, 7.202860473105397, 18.29555893175065, 41.9662063457648, 34.23574815693844, -38.33343388877618, 15.449962402533338, 95.49673076664354], [1206.5608796692436, 165.43516012586997, -256.8536948565149, -295.1819031631183, 62.68747636612941, -151.454822571321, -154.0626654651222, -28.4474098554423, 177.41762668869526, -106.5965487981926, -171.67815705890314, 35.348255546042445, -13.886931251420087, -84.32305053774326, -1.9702946987055225, -242.14906374147583, 52.56624476480591, 13.224251335930408, -142.61845513290694, 112.23033504819274, 128.03295168719504, 19.259097819008314, 39.94261039269458, 120.08894752851049, 99.0108459463732, -171.98958955701832, 57.02139933098091, 323.84385748297785], [1.09687352697204, 0.150395600114427, -0.2335033589604679, -0.2683471846937439, 0.05698861487829945, -0.13768620233756412, -0.14005696860465675, -0.02586128168676548, 0.16128875153517755, -0.0969059534529024, -0.15607105187173012, 0.032134777769129284, -0.012624482955836304, -0.07665731867067609, -0.0017911769988232101, -0.2201355124922509, 0.04778749524073199, 0.01202204666902794, -0.1296531410299154, 0.10202757731653903, 0.11639359244290481, 0.017508270744553092, 0.03631146399335909, 0.10917177048046468, 0.09000985995124851, -0.15635417232456203, 0.05183763575543756, 0.2944035068027075], [0.09487777396329873, 0.008589221931608616, -0.018054032092989836, -0.020313175971769015, 0.002691656475409682, -0.012261066880536253, -0.007159965673102869, 0.0033989021033715176, 0.0195682931605678, -0.010547813917835644, -0.015377916382084815, 0.002116659404452192, -0.0005261093537306967, -0.0012222177106893366, -0.005326020373478239, -0.020020033202224397, 0.004951958110053468, 0.0008565073439843867, -0.009080987239537262, 0.01294433729316496, 0.010265976797498945, 0.003774994793058077, -0.00015837582097569505, 0.008039972688471576, 0.006607205253333364, -0.017509898679082873, 0.0032209859130440544, 0.028469386663580412], [0.00019052741378672636, 1.753279157649147e-05, -3.5786313849585785e-05, -4.117378557895572e-05, 4.944137706839321e-06, -2.422756925122391e-05, -2.4748598925589124e-05, 6.487925107943229e-06, 3.762955186518789e-05, -1.815730616087641e-05, -2.8883180627805557e-05, 5.795881976040482e-06, -2.389321916958661e-07, -7.238809931432753e-06, -8.587840756331172e-06, -3.7714991547564573e-05, 1.0766444576908663e-05, 4.274652335171782e-06, -1.999614314175307e-05, 2.4945474916508476e-05, 2.0310625268034428e-05, 6.959884752148304e-06, -1.8648450235171588e-06, 1.4595010941894345e-05, 1.2072807623975896e-05, -3.83753840986448e-05, 7.1001783425539526e-06, 5.7398118301943716e-05], [371.34630964680656, 49.41784661858501, -81.45788614493594, -90.65289750673882, 21.134727880203393, -47.59702446062779, -7.845008652710376, -8.035242392299166, 60.07994942225102, -42.530828230770915, -58.801913941740665, 5.997048925261735, -5.3089846405504995, -8.319710996378536, -7.3469237431621055, -83.99073866854702, 12.16408079216755, -5.646381746673501, -38.454507033390634, 37.496972536993844, 39.908435343003276, 7.76530567404159, 19.838956496451505, 44.50262786244326, 36.11604409214718, -38.476369642092216, 15.804071272127466, 99.52354880481857], [1256.2607766628278, 171.2939875001587, -268.1363943923814, -307.34070470034624, 65.92336696083294, -158.7334357458234, -146.10010050399853, -28.876115251516943, 187.044072655309, -114.80073175733052, -181.61894010995843, 34.7796576748629, -15.143231365318579, -81.49519931731943, -4.563197569663837, -255.72486018314012, 53.37497224977644, 10.652770395074542, -146.0991285983021, 118.17208303353338, 133.96820855084903, 20.932327370658182, 44.54532702069481, 127.31436550386596, 104.80572930700059, -174.15307573981576, 58.56454021721123, 336.28355130491946], [1.142055251511661, 0.1557218068183268, -0.24376035853852823, -0.2794006406366784, 0.05993033360075721, -0.14430312340529383, -0.13281827318545278, -0.02625101386501567, 0.17004006605028105, -0.10436430159757357, -0.16510812737268957, 0.031617870613511505, -0.013766573968471554, -0.0740865448339264, -0.0041483614269673, -0.23247714562103658, 0.0485227020452512, 0.009684336722794933, -0.13281738963481984, 0.10742916639412133, 0.12178928050077181, 0.01902938851878, 0.04049575183699517, 0.11574033227624181, 0.09527793573363673, -0.15832097794528696, 0.053240491106555564, 0.3057123193681085], [0.09741416242495364, 0.010735155281452009, -0.020077309109222664, -0.02398725555883137, 0.006554232485455966, -0.010298369556154785, -0.004076459636848299, 0.0007741050352523835, 0.018856745201351055, -0.011539966548264662, -0.013072012865272705, 0.003193429204438363, 0.001681337909755833, 0.0011535258301321517, -0.004433908097557707, -0.021442132718496137, 0.0052495243888523065, -0.000600333538234971, -0.008167563142882077, 0.011870291471045227, 0.009269615127945937, 0.002546092240924894, -0.0004427075536635252, 0.009781864822132027, 0.007888871359993103, -0.014862809270820473, 0.005670663494103717, 0.028784985460962146], [0.00018743649688729352, 2.0639413956601273e-05, -3.7912563477890194e-05, -4.641539315837447e-05, 1.2158397166557759e-05, -1.9761636951141647e-05, -2.02590828386846e-05, 1.177745791927959e-06, 3.4495507215660776e-05, -1.8839820361582963e-05, -2.30859225158617e-05, 7.674059169571987e-06, 3.9507345370774836e-06, -3.5907247176092703e-06, -6.177340103313683e-06, -3.836101116571114e-05, 1.1029053413617281e-05, 2.18542574886799e-06, -1.753446984043236e-05, 2.187365315268384e-05, 1.783630647938947e-05, 4.305312287037197e-06, -2.8535455807679053e-06, 1.6802490730902396e-05, 1.3255465192041424e-05, -3.266506104185084e-05, 1.1429717944585025e-05, 5.552839246538128e-05], [387.42353762777054, 51.565866425852626, -85.38130717418903, -94.66365205694693, 22.30928770047096, -49.398149067002436, -3.4071005539885904, -8.465832430119239, 63.164984494811165, -45.367435841831686, -61.70887456348578, 5.845536513213182, -5.4250640681537, -6.539015390946736, -8.36475874489221, -88.70371840873679, 12.139943276789088, -7.22971756506414, -39.63517980969643, 39.307075518312665, 41.46215388956743, 8.216341424608018, 21.619652912349054, 47.57985964881457, 38.62589446023003, -38.20043041827017, 16.488523933988148, 104.08158492779145], [1309.4408690641753, 178.70681101503092, -280.8793279732497, -320.99567200333564, 69.63756481927051, -164.9381948325719, -136.3809720994282, -30.163997129136938, 196.57211728015756, -123.18479529535034, -191.01386699563596, 34.837586643676666, -15.67642265921016, -77.88865965574239, -6.888855340662519, -270.25169298744186, 54.00412501639846, 6.74146371246704, -150.3718880921409, 123.69590044801537, 139.28185706735678, 22.25692548652252, 49.888984573742746, 136.16576352859403, 112.53275553046802, -175.0966188540646, 61.13997601548988, 350.3137531665284], [1.1904007900583407, 0.16246073728639168, -0.2553448436120449, -0.2918142472757595, 0.0633068771084273, -0.14994381348415645, -0.12398270190857039, -0.027421815571942662, 0.17870192480014319, -0.11198617754122751, -0.1736489699960328, 0.03167053331243329, -0.014251293326554759, -0.07080787241431095, -0.0062625957642388165, -0.24568335726131077, 0.04909465910581668, 0.006128603374970044, -0.13670171644740114, 0.11245081858910486, 0.1266198700612333, 0.02023356862411121, 0.04535362233976624, 0.1237870577532673, 0.10230250502769804, -0.1591787444127858, 0.055581796377717596, 0.31846704833320777], [0.10287573869739985, 0.012313496354390826, -0.021259236639531883, -0.02732139999536254, 0.009106555003487627, -0.00792218712124578, -0.00308761430818315, -1.3516824826640991e-05, 0.019754551081165254, -0.012044630038819337, -0.011214194217276714, 0.004726187170654576, 0.0046220142195056, 0.0029472204668184137, -0.004548009529910641, -0.02316358030184798, 0.00524453744172793, -0.0010106433327864669, -0.008395139552769392, 0.011872898749021634, 0.008242623664503906, 0.001431784894040803, -0.0009065629602560359, 0.011622533909188375, 0.00897110285289604, -0.014695242729339794, 0.008186137858384988, 0.03136816618993519], [0.0001898061334276127, 2.2288469360898947e-05, -3.83028995141051e-05, -5.0486553210183674e-05, 1.6278441837199317e-05, -1.4923130172826744e-05, -2.0532787101137237e-05, -3.3229623165327577e-07, 3.4480234184374226e-05, -1.826936892103667e-05, -1.8381964273962733e-05, 1.0357697847229048e-05, 9.252372135305388e-06, -1.5468781983909219e-06, -5.713308721165911e-06, -3.9300417956170067e-05, 1.0758111076165175e-05, 2.2927642101068607e-06, -1.7572653059243934e-05, 2.0969346479585943e-05, 1.543703799661421e-05, 2.0719262961769644e-06, -4.2085688320061014e-06, 1.8942746416011118e-05, 1.3889757466603635e-05, -3.208530004375218e-05, 1.5449199157592135e-05, 5.814605660395566e-05], [403.97545945925003, 53.5200423976639, -89.27940988115546, -98.52682024724555, 23.383159289641714, -51.67009150924548, 1.1728661208170852, -8.749457718837963, 66.55384080380225, -48.47505437520671, -65.04164529743981, 5.443111339127988, -5.830933806463641, -4.709623195449606, -9.616254176095536, -93.58011159653186, 12.157003887612065, -8.703456560338733, -40.6924331902258, 41.42745876407294, 43.32066894399904, 8.839941072400194, 23.297062058326897, 50.5420545710751, 40.85573793069532, -38.15749321019605, 16.872730032129127, 108.72902797549737], [1364.2619557904484, 185.60573767014876, -293.5842275770574, -334.2994253352721, 73.08913004716858, -172.56431187379076, -126.36178881704282, -31.035690773419986, 207.02169125805716, -132.39171739341762, -201.69038499267228, 34.169662020892254, -17.06378125431421, -74.18035310854683, -9.890109379638588, -285.2967122839546, 54.78573897457771, 3.190023277721333, -154.2941298575213, 130.1519865077044, 145.52502626144826, 24.07874336826788, 54.905797376578484, 144.66986809678625, 119.41810248715807, -176.80032579553367, 62.851687285637034, 364.6407292418072], [1.2402381416276813, 0.16873248879104505, -0.2668947523427798, -0.3039085684866114, 0.06644466367924451, -0.15687664715799193, -0.1148743534700378, -0.02821426433947346, 0.18820153750732468, -0.12035610672128941, -0.18335489544788397, 0.031063329109901856, -0.01551252841301315, -0.0674366846441328, -0.008991008526944374, -0.2593606475308682, 0.04980521724961645, 0.0029000211615645153, -0.14026739077956465, 0.11831998773427678, 0.13229547841949843, 0.02188976669842513, 0.049914361251434544, 0.13151806190616938, 0.1085619113519615, -0.16072756890503023, 0.0571378975323971, 0.3314915720380069], [0.10256267604257999, 0.008981319445271915, -0.02031457010542367, -0.024889298276753118, 0.009358269263801677, -0.012351211303252212, -0.0024830401641035044, 0.002772118543448203, 0.022500869803898153, -0.014887298554822063, -0.016484940707114714, 0.0022268497400568395, 0.0005391835487109978, 0.0030843120546162226, -0.006509927151410615, -0.024091264120288454, 0.006334084457957579, 0.0005178729647900954, -0.005782085733778157, 0.014373271181534667, 0.011349079306506247, 0.0034292529093024795, -0.0013110449723441105, 0.007871529753921212, 0.006006672332903449, -0.018150297196699854, 0.005761189838195463, 0.027552235185187218], [0.00018162512578249858, 1.612204973607422e-05, -3.5224693225966384e-05, -4.4745449416675335e-05, 1.5953243689497378e-05, -2.1735025107142407e-05, -2.0602644136059355e-05, 4.174251355704857e-06, 3.718171701975153e-05, -2.170529178453242e-05, -2.612790307107771e-05, 6.101616411655696e-06, 2.1808377111146477e-06, -2.211836451819436e-06, -8.134039067171644e-06, -3.881027220828882e-05, 1.236794831865351e-05, 5.17147704628132e-06, -1.279258172063249e-05, 2.391249446980996e-05, 1.995626947349937e-05, 5.162242080706416e-06, -4.756007221454102e-06, 1.1606752979300282e-05, 8.360462668729507e-06, -3.6922165604641575e-05, 1.0978426731761356e-05, 4.906285214376623e-05]]};
+  const PARAMS = ["fraction_active_rnap_free", "fraction_active_rnap_bound", "basal_elongation_rate", "kinetic_objective_weight", "secretion_penalty_coeff", "cell_dry_mass_fraction"];
+  const OBS = ["listeners__mass__dry_mass", "listeners__mass__cell_mass", "listeners__mass__volume", "listeners__mass__growth", "listeners__mass__instantaneous_growth_rate"];
+  const N_STAGES = 10;
+  const nP = PARAMS.length;
+  const nObs = OBS.length;
+  const bounds = S.bounds;
+  const mi = S.multi_indices;
+  const popC = S.pop_coeffs;
+  const gsC = S.gs_coeffs || null;
+  const nBasis = mi.length;
+
+  function legendreEval(xNorm, coeffs) {
+    let maxOrd = 0;
+    for (let t = 0; t < nBasis; t++)
+      for (let p = 0; p < nP; p++)
+        if (mi[t][p] > maxOrd) maxOrd = mi[t][p];
+    const P = [];
+    for (let p = 0; p < nP; p++) {
+      P[p] = new Float64Array(maxOrd + 1);
+      P[p][0] = 1.0;
+      if (maxOrd >= 1) P[p][1] = xNorm[p];
+      for (let n = 2; n <= maxOrd; n++)
+        P[p][n] = ((2*n - 1) * xNorm[p] * P[p][n-1] - (n-1) * P[p][n-2]) / n;
+    }
+    let result = 0;
+    for (let t = 0; t < coeffs.length; t++) {
+      let term = coeffs[t];
+      for (let p = 0; p < nP; p++) term *= P[p][mi[t][p]];
+      result += term;
+    }
+    return result;
+  }
+
+  function getXNorm() {
+    const xPhys = [];
+    for (let i = 0; i < nP; i++) {
+      const sl = document.getElementById('pce-slider-' + i);
+      xPhys.push(parseFloat(sl.value));
+    }
+    const xNorm = [];
+    for (let i = 0; i < nP; i++) {
+      const lo = bounds[i][0], hi = bounds[i][1];
+      xNorm.push(2 * (xPhys[i] - lo) / (hi - lo + 1e-15) - 1);
+    }
+    return { xPhys, xNorm };
+  }
+
+  function shortName(s) {
+    return s.replace('fraction_active_', '')
+            .replace('cell_dry_mass_fraction', 'dry_mass_frac')
+            .replace('listeners__mass__', '')
+            .replace('instantaneous_growth_rate', 'growth_rate');
+  }
+
+  // Track selected observables as a Set of indices
+  const selected = new Set();
+
+  function getSelected() {
+    return selected.size > 0 ? Array.from(selected).sort() : Array.from({length: nObs}, (_, i) => i);
+  }
+
+  function update() {
+    const { xPhys, xNorm } = getXNorm();
+    const sel = getSelected();
+
+    // Update slider value displays
+    for (let i = 0; i < nP; i++) {
+      document.getElementById('pce-val-' + i).textContent = xPhys[i].toFixed(4);
+    }
+
+    // Population predictions
+    const popPreds = [];
+    for (let o = 0; o < nObs; o++) {
+      popPreds.push(legendreEval(xNorm, popC[o]));
+    }
+
+    // Update readout cards — highlight selected
+    for (let o = 0; o < nObs; o++) {
+      const el = document.getElementById('pce-pred-' + o);
+      if (el) {
+        el.textContent = popPreds[o].toFixed(4);
+        el.parentElement.style.borderColor = selected.has(o) ? 'var(--accent)' : 'var(--border)';
+      }
+    }
+
+    // Growth-stratified profile chart
+    if (gsC && N_STAGES > 0) {
+      drawProfile(xNorm, sel);
+    }
+  }
+
+  const CHART_COLORS = ['#6366f1','#f59e0b','#10b981','#ef4444','#3b82f6',
+                         '#8b5cf6','#ec4899','#14b8a6','#f97316','#84cc16'];
+
+  function drawProfile(xNorm, selList) {
+    const svg = document.getElementById('pce-profile-svg');
+    if (!svg) return;
+    const W = 560, H = 200;
+    const ml = 60, mr = 20, mt = 10, mb = 40;
+    const pw = W - ml - mr, ph = H - mt - mb;
+    const selSet = new Set(selList);
+
+    // Compute all per-stage predictions
+    const allPreds = []; // [obs][stage]
+    for (let o = 0; o < nObs; o++) {
+      allPreds[o] = [];
+      for (let s = 0; s < N_STAGES; s++) {
+        const colIdx = s * nObs + o;
+        if (colIdx < gsC.length) {
+          allPreds[o].push(legendreEval(xNorm, gsC[colIdx]));
+        }
+      }
+    }
+
+    // Find Y range across selected obs
+    let yMin = Infinity, yMax = -Infinity;
+    for (const o of selList) {
+      for (const v of allPreds[o]) {
+        if (v < yMin) yMin = v;
+        if (v > yMax) yMax = v;
+      }
+    }
+    if (yMax <= yMin) { yMax = yMin + 1; }
+    const yPad = (yMax - yMin) * 0.1;
+    yMin -= yPad; yMax += yPad;
+
+    let parts = [];
+    // Background
+    parts.push('<rect width="' + W + '" height="' + H + '" fill="#222240" rx="4"/>');
+    // Grid
+    for (let i = 0; i <= 4; i++) {
+      const yv = yMin + (yMax - yMin) * i / 4;
+      const yp = mt + ph - (i / 4) * ph;
+      parts.push('<line x1="' + ml + '" y1="' + yp.toFixed(1) + '" x2="' + (W-mr)
+        + '" y2="' + yp.toFixed(1) + '" stroke="#333355" stroke-width="1"/>');
+      parts.push('<text x="' + (ml-6) + '" y="' + (yp+4).toFixed(1)
+        + '" text-anchor="end" font-size="10" fill="#94a3b8">' + yv.toFixed(2) + '</text>');
+    }
+    // X-axis labels
+    for (let s = 0; s < N_STAGES; s++) {
+      const xc = ml + (s + 0.5) * pw / N_STAGES;
+      const lo = Math.round(s / N_STAGES * 100);
+      const hi = Math.round((s+1) / N_STAGES * 100);
+      parts.push('<text x="' + xc.toFixed(1) + '" y="' + (H - mb + 16)
+        + '" text-anchor="middle" font-size="9" fill="#94a3b8">'
+        + lo + '-' + hi + '%</text>');
+    }
+    // X-axis title
+    parts.push('<text x="' + (ml + pw/2) + '" y="' + (H - 4)
+      + '" text-anchor="middle" font-size="11" fill="#94a3b8">'
+      + 'Cell Cycle Progress (\u03b8)</text>');
+
+    // Draw lines — selected observables bold, rest dimmed
+    for (let o = 0; o < nObs; o++) {
+      if (allPreds[o].length === 0) continue;
+      const isSel = selSet.has(o);
+      // Skip unselected entirely when specific selection exists
+      if (selected.size > 0 && !isSel) continue;
+      const pts = [];
+      for (let s = 0; s < allPreds[o].length; s++) {
+        const x = ml + (s + 0.5) * pw / N_STAGES;
+        const y = mt + ph - ((allPreds[o][s] - yMin) / (yMax - yMin)) * ph;
+        pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+      }
+      const col = CHART_COLORS[o % CHART_COLORS.length];
+      parts.push('<polyline points="' + pts.join(' ')
+        + '" fill="none" stroke="' + col + '" stroke-width="2.5"'
+        + ' stroke-linejoin="round"/>');
+      // Dots
+      for (let s = 0; s < allPreds[o].length; s++) {
+        const x = ml + (s + 0.5) * pw / N_STAGES;
+        const y = mt + ph - ((allPreds[o][s] - yMin) / (yMax - yMin)) * ph;
+        parts.push('<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1)
+          + '" r="3" fill="' + col + '"/>');
+      }
+    }
+
+    // Legend (only selected)
+    let lx = ml + 4, ly = mt + 4;
+    for (const o of selList) {
+      const col = CHART_COLORS[o % CHART_COLORS.length];
+      const name = shortName(OBS[o]);
+      if (name.length > 25) continue;
+      parts.push('<rect x="' + lx + '" y="' + ly + '" width="10" height="10" fill="' + col + '" rx="2"/>');
+      parts.push('<text x="' + (lx+14) + '" y="' + (ly+9) + '" font-size="10" fill="#e2e8f0">' + name + '</text>');
+      ly += 14;
+      if (ly > mt + ph - 10) break;
+    }
+
+    svg.innerHTML = parts.join('');
+  }
+
+  function syncToggleStyles() {
+    const pills = document.querySelectorAll('.obs-toggle');
+    pills.forEach(function(pill) {
+      const idx = parseInt(pill.dataset.idx);
+      if (selected.has(idx)) {
+        pill.classList.add('active');
+      } else {
+        pill.classList.remove('active');
+      }
+    });
+  }
+
+  // Build slider panel
+  function init() {
+    const panel = document.getElementById('pce-sliders');
+    if (!panel) return;
+    for (let i = 0; i < nP; i++) {
+      const lo = bounds[i][0], hi = bounds[i][1];
+      const mid = (lo + hi) / 2;
+      const div = document.createElement('div');
+      div.className = 'slider-group';
+      div.innerHTML =
+        '<label><code>' + shortName(PARAMS[i]) + '</code><span id="pce-val-' + i + '">'
+        + mid.toFixed(4) + '</span></label>'
+        + '<input type="range" id="pce-slider-' + i + '" min="' + lo + '" max="' + hi
+        + '" step="' + ((hi - lo) / 200) + '" value="' + mid + '">'
+        + '<div class="bounds"><span>' + lo.toFixed(3) + '</span><span>' + hi.toFixed(3) + '</span></div>';
+      panel.appendChild(div);
+      document.getElementById('pce-slider-' + i).addEventListener('input', update);
+    }
+
+    // Build observable toggle pills
+    const toggles = document.getElementById('pce-obs-toggles');
+    for (let o = 0; o < nObs; o++) {
+      const pill = document.createElement('span');
+      pill.className = 'obs-toggle active';
+      pill.dataset.idx = o;
+      const col = CHART_COLORS[o % CHART_COLORS.length];
+      pill.innerHTML = '<span class="color-dot" style="background:' + col + '"></span>'
+        + shortName(OBS[o]);
+      selected.add(o);
+      pill.addEventListener('click', function() {
+        const idx = parseInt(this.dataset.idx);
+        if (selected.has(idx)) {
+          selected.delete(idx);
+        } else {
+          selected.add(idx);
+        }
+        syncToggleStyles();
+        update();
+      });
+      toggles.appendChild(pill);
+    }
+
+    // Build prediction readout cards
+    const readout = document.getElementById('pce-readout');
+    for (let o = 0; o < nObs; o++) {
+      const card = document.createElement('div');
+      card.className = 'pred-card';
+      card.innerHTML = '<div class="pred-label">' + shortName(OBS[o])
+        + '</div><div class="pred-value" id="pce-pred-' + o + '">-</div>';
+      card.style.cursor = 'pointer';
+      card.dataset.idx = o;
+      card.addEventListener('click', function() {
+        const idx = parseInt(this.dataset.idx);
+        if (selected.has(idx)) {
+          selected.delete(idx);
+        } else {
+          selected.add(idx);
+        }
+        syncToggleStyles();
+        update();
+      });
+      readout.appendChild(card);
+    }
+
+    // Reset sliders button
+    document.getElementById('pce-reset').addEventListener('click', function() {
+      for (let i = 0; i < nP; i++) {
+        const lo = bounds[i][0], hi = bounds[i][1];
+        document.getElementById('pce-slider-' + i).value = (lo + hi) / 2;
+      }
+      update();
+    });
+
+    // Select All button
+    document.getElementById('pce-select-all').addEventListener('click', function() {
+      for (let o = 0; o < nObs; o++) selected.add(o);
+      syncToggleStyles();
+      update();
+    });
+
+    // Clear selection button
+    document.getElementById('pce-select-none').addEventListener('click', function() {
+      selected.clear();
+      syncToggleStyles();
+      update();
+    });
+
+    update();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

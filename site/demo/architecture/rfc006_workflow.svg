@@ -1,0 +1,260 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1150" font-family="'Segoe UI', Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#475569"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#8b5cf6"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#d97706"/>
+    </marker>
+    <linearGradient id="headerGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+    <linearGradient id="phase1Grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eff6ff"/>
+      <stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+    <linearGradient id="phase2Grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f5f3ff"/>
+      <stop offset="100%" stop-color="#ede9fe"/>
+    </linearGradient>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#00000020"/>
+    </filter>
+    <filter id="shadow-lg" x="-3%" y="-3%" width="106%" height="106%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#00000025"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1800" height="1150" fill="#f8fafc" rx="12"/>
+
+  <!-- ===== TITLE BAR ===== -->
+  <rect x="20" y="15" width="1760" height="60" rx="10" fill="url(#headerGrad)" filter="url(#shadow-lg)"/>
+  <text x="900" y="38" text-anchor="middle" fill="#f1f5f9" font-size="18" font-weight="700">RFC006 FULL UQ WORKFLOW</text>
+  <text x="160" y="58" fill="#94a3b8" font-size="10">
+    <tspan font-weight="600" fill="#cbd5e1">Inputs:</tspan>
+    <tspan dx="4">experiment_id</tspan>
+    <tspan dx="12">hpc_sim_base_path</tspan>
+    <tspan dx="12">param_space: InputParameterSpaceVecoli</tspan>
+    <tspan dx="12">f: Callable[[ndarray], ndarray]</tspan>
+  </text>
+
+  <!-- ===== TOP ROW: Steps 1-4 (horizontal) ===== -->
+
+  <!-- STEP 1 -->
+  <rect x="20" y="90" width="390" height="60" rx="7" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="20" y="90" width="390" height="22" rx="7" fill="#0ea5e9" opacity="0.1"/>
+  <rect x="20" y="102" width="390" height="10" fill="#0ea5e9" opacity="0.1"/>
+  <text x="36" y="106" fill="#0369a1" font-size="11" font-weight="700">STEP 1: Define Parameter Space</text>
+  <text x="36" y="126" fill="#475569" font-size="9.5" font-family="'SF Mono', 'Fira Code', monospace">InputParameterSpaceVecoli(vio, mecillinam)</text>
+  <text x="36" y="140" fill="#64748b" font-size="9.5">&#x2192; n parameters with bounds</text>
+
+  <!-- Arrow 1→2 -->
+  <line x1="410" y1="120" x2="435" y2="120" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- STEP 2 -->
+  <rect x="445" y="90" width="390" height="60" rx="7" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="445" y="90" width="390" height="22" rx="7" fill="#0ea5e9" opacity="0.1"/>
+  <rect x="445" y="102" width="390" height="10" fill="#0ea5e9" opacity="0.1"/>
+  <text x="461" y="106" fill="#0369a1" font-size="11" font-weight="700">STEP 2: Load Simulation Data</text>
+  <text x="461" y="126" fill="#475569" font-size="9.5" font-family="'SF Mono', 'Fira Code', monospace">load_dataset(experiment_id, hpc_sim_base_path)</text>
+  <text x="461" y="140" fill="#64748b" font-size="9.5">&#x2192; Polars DataFrame (hive-partitioned Parquet)</text>
+
+  <!-- Arrow 2→3 -->
+  <line x1="835" y1="120" x2="860" y2="120" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- STEP 3: Aggregation -->
+  <rect x="870" y="90" width="510" height="60" rx="7" fill="#ffffff" stroke="#fbbf24" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="870" y="90" width="510" height="22" rx="7" fill="#f59e0b" opacity="0.1"/>
+  <rect x="870" y="102" width="510" height="10" fill="#f59e0b" opacity="0.1"/>
+  <text x="886" y="106" fill="#b45309" font-size="11" font-weight="700">STEP 3: Aggregation Strategies 1-3</text>
+  <text x="1220" y="106" fill="#d97706" font-size="10" font-weight="600">(PARALLEL)</text>
+
+  <!-- 3 strategy mini-boxes -->
+  <rect x="886" y="118" width="140" height="26" rx="5" fill="#fffbeb" stroke="#fbbf24" stroke-width="0.8"/>
+  <text x="956" y="135" text-anchor="middle" fill="#92400e" font-size="9" font-weight="600">UNIFORM</text>
+  <rect x="1040" y="118" width="160" height="26" rx="5" fill="#fffbeb" stroke="#fbbf24" stroke-width="0.8"/>
+  <text x="1120" y="135" text-anchor="middle" fill="#92400e" font-size="9" font-weight="600">BY_GENERATION</text>
+  <rect x="1214" y="118" width="155" height="26" rx="5" fill="#fffbeb" stroke="#fbbf24" stroke-width="0.8"/>
+  <text x="1292" y="135" text-anchor="middle" fill="#92400e" font-size="9" font-weight="600">BY_LINEAGE_SEED</text>
+
+  <!-- Arrow 3→4 -->
+  <line x1="1380" y1="120" x2="1405" y2="120" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- STEP 4: Variance Decomposition -->
+  <rect x="1415" y="85" width="365" height="70" rx="7" fill="#ffffff" stroke="#10b981" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="1415" y="85" width="365" height="22" rx="7" fill="#10b981" opacity="0.12"/>
+  <rect x="1415" y="97" width="365" height="10" fill="#10b981" opacity="0.12"/>
+  <text x="1431" y="101" fill="#065f46" font-size="11" font-weight="700">STEP 4: Variance Decomposition</text>
+  <text x="1431" y="120" fill="#475569" font-size="9" font-family="'SF Mono', 'Fira Code', monospace">compute_variance_decomposition()</text>
+  <text x="1431" y="137" fill="#64748b" font-size="9">gen_frac | seed_frac | <tspan font-weight="600" fill="#065f46">residual_frac</tspan></text>
+  <text x="1431" y="148" fill="#64748b" font-size="8.5" font-style="italic">(convergence)&#x2003;(exogenous)&#x2003;(cell-cycle)</text>
+
+  <!-- ===== BRANCHING ARROW from Step 4 into Phase 1 + Phase 2 ===== -->
+  <line x1="1597" y1="155" x2="1597" y2="180" stroke="#475569" stroke-width="2"/>
+  <!-- Left branch to Phase 1 -->
+  <line x1="1597" y1="180" x2="440" y2="180" stroke="#3b82f6" stroke-width="2"/>
+  <line x1="440" y1="180" x2="440" y2="210" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <!-- Right branch to Phase 2 -->
+  <line x1="1597" y1="180" x2="1350" y2="180" stroke="#8b5cf6" stroke-width="2"/>
+  <line x1="1350" y1="180" x2="1350" y2="210" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arrow-purple)"/>
+
+  <!-- ===== PHASE 1 CONTAINER ===== -->
+  <rect x="20" y="215" width="860" height="680" rx="10" fill="url(#phase1Grad)" stroke="#93c5fd" stroke-width="1.5" filter="url(#shadow-lg)"/>
+  <text x="40" y="240" fill="#1e40af" font-size="14" font-weight="700">PHASE 1</text>
+  <text x="120" y="240" fill="#3b82f6" font-size="11">(Strategies 1-3 GSA)</text>
+
+  <!-- STEP 5: PCE Surrogate -->
+  <rect x="50" y="255" width="810" height="140" rx="7" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect x="50" y="255" width="810" height="22" rx="7" fill="#3b82f6" opacity="0.12"/>
+  <rect x="50" y="267" width="810" height="10" fill="#3b82f6" opacity="0.12"/>
+  <text x="66" y="271" fill="#1e40af" font-size="11" font-weight="700">STEP 5: PCE Surrogate (Strategies 1-3)</text>
+  <text x="66" y="296" fill="#475569" font-size="10">Polynomial Chaos Expansion (Legendre basis) fitted via PyTUQ:</text>
+  <text x="66" y="318" fill="#475569" font-size="10" font-family="'SF Mono', 'Fira Code', monospace">f(x) &#x2248; &#x2211; c_&#x3b1; &#x3a8;_&#x3b1;(x)    where &#x3a8;_&#x3b1;(x) = &#x220f; P_{&#x3b1;_i}(x_i)</text>
+  <text x="66" y="340" fill="#64748b" font-size="10">Germ samples via PCRV.sampleGerm() &#x2192; vEcoli evaluation &#x2192; fit coefficients (lsq/bcs/anl)</text>
+  <text x="66" y="360" fill="#64748b" font-size="10">&#x2192; PCESurrogate (instant predict(x), no simulation needed)</text>
+  <rect x="770" y="368" width="75" height="18" rx="9" fill="#dbeafe"/>
+  <text x="807" y="380" text-anchor="middle" fill="#1d4ed8" font-size="8" font-weight="600">SURROGATE</text>
+
+  <!-- Arrow 5→6 -->
+  <line x1="440" y1="395" x2="440" y2="420" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <!-- STEP 6: Sobol Indices -->
+  <rect x="50" y="425" width="810" height="105" rx="7" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect x="50" y="425" width="810" height="22" rx="7" fill="#3b82f6" opacity="0.12"/>
+  <rect x="50" y="437" width="810" height="10" fill="#3b82f6" opacity="0.12"/>
+  <text x="66" y="441" fill="#1e40af" font-size="11" font-weight="700">STEP 6: Sobol Indices (from PCE Coefficients)</text>
+  <text x="66" y="466" fill="#475569" font-size="10">S_i (first-order, main effects)&#x2003;&#x2003;S_Ti (total-order, includes interactions)</text>
+  <text x="66" y="488" fill="#64748b" font-size="10" font-style="italic">"Which parameters drive bulk output variance?"</text>
+  <text x="66" y="510" fill="#64748b" font-size="10">Computed analytically from PCE coefficients (Sudret 2008) &#x2014; no additional sampling</text>
+  <rect x="770" y="503" width="75" height="18" rx="9" fill="#dbeafe"/>
+  <text x="807" y="515" text-anchor="middle" fill="#1d4ed8" font-size="8" font-weight="600">ANALYSIS</text>
+
+  <!-- Phase 1 outputs summary -->
+  <rect x="50" y="545" width="810" height="100" rx="7" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="66" y="566" fill="#1e40af" font-size="11" font-weight="700">Phase 1 Outputs:</text>
+  <text x="66" y="586" fill="#475569" font-size="10">&#x251c; AggregatedOutput &#xd7; 3&#x2003;&#x251c; variance decomposition (fractions)</text>
+  <text x="66" y="606" fill="#475569" font-size="10">&#x251c; PCESurrogate (bulk predictions)&#x2003;&#x2514; SobolIndices (S_i, S_Ti per parameter)</text>
+  <text x="66" y="630" fill="#64748b" font-size="9.5" font-style="italic">residual_fraction feeds into Phase 2 observable selection &#x2192;</text>
+
+  <!-- ===== PHASE 2 CONTAINER ===== -->
+  <rect x="910" y="215" width="870" height="680" rx="10" fill="url(#phase2Grad)" stroke="#c4b5fd" stroke-width="1.5" filter="url(#shadow-lg)"/>
+  <text x="930" y="240" fill="#5b21b6" font-size="14" font-weight="700">PHASE 2</text>
+  <text x="1010" y="240" fill="#8b5cf6" font-size="11">(Strategy 4 &#x2014; Cell Cycle)</text>
+
+  <!-- STEP 5b: GSA-Informed Observable Selection -->
+  <rect x="940" y="255" width="400" height="110" rx="7" fill="#ffffff" stroke="#ddd6fe" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect x="940" y="255" width="400" height="22" rx="7" fill="#8b5cf6" opacity="0.1"/>
+  <rect x="940" y="267" width="400" height="10" fill="#8b5cf6" opacity="0.1"/>
+  <text x="956" y="271" fill="#5b21b6" font-size="11" font-weight="700">STEP 5b: GSA-Informed Observable Selection</text>
+  <text x="956" y="296" fill="#475569" font-size="9.5" font-family="'SF Mono', 'Fira Code', monospace">identify_cell_cycle_relevant_observables(decomp)</text>
+  <text x="956" y="318" fill="#64748b" font-size="10">Filter by high residual_fraction</text>
+  <text x="956" y="340" fill="#64748b" font-size="10">&#x2192; relevant_obs: list[str]</text>
+  <rect x="1252" y="340" width="75" height="18" rx="9" fill="#ede9fe"/>
+  <text x="1289" y="352" text-anchor="middle" fill="#6d28d9" font-size="8" font-weight="600">SELECTION</text>
+
+  <!-- Arrow 5b→6b -->
+  <line x1="1340" y1="330" x2="1368" y2="330" stroke="#8b5cf6" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- STEP 6b: Growth-Stratified Cell Cycle Variable -->
+  <rect x="1378" y="255" width="380" height="110" rx="7" fill="#ffffff" stroke="#ddd6fe" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect x="1378" y="255" width="380" height="22" rx="7" fill="#8b5cf6" opacity="0.1"/>
+  <rect x="1378" y="267" width="380" height="10" fill="#8b5cf6" opacity="0.1"/>
+  <text x="1394" y="271" fill="#5b21b6" font-size="11" font-weight="700">STEP 6b: Growth-Stratified &#x3b8;</text>
+  <text x="1394" y="296" fill="#475569" font-size="9.5" font-family="'SF Mono', 'Fira Code', monospace">bin_by_growth_stage(mass, n_bins)</text>
+  <text x="1394" y="318" fill="#64748b" font-size="10">&#x3b8; = [log(m) &#x2212; log(m_birth)] / [log(m_div) &#x2212; log(m_birth)]</text>
+  <text x="1394" y="340" fill="#64748b" font-size="10">&#x2192; &#x3b8; &#x2208; [0, 1]</text>
+  <rect x="1670" y="340" width="75" height="18" rx="9" fill="#ede9fe"/>
+  <text x="1707" y="352" text-anchor="middle" fill="#6d28d9" font-size="8" font-weight="600">GROWTH</text>
+
+  <!-- Arrow 6b→6c -->
+  <line x1="1350" y1="365" x2="1350" y2="390" stroke="#8b5cf6" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- STEP 6c: Strategy 4 Aggregation -->
+  <rect x="940" y="395" width="400" height="90" rx="7" fill="#ffffff" stroke="#ddd6fe" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect x="940" y="395" width="400" height="22" rx="7" fill="#8b5cf6" opacity="0.1"/>
+  <rect x="940" y="407" width="400" height="10" fill="#8b5cf6" opacity="0.1"/>
+  <text x="956" y="411" fill="#5b21b6" font-size="11" font-weight="700">STEP 6c: Strategy 4 Aggregation</text>
+  <text x="956" y="436" fill="#475569" font-size="9.5" font-family="'SF Mono', 'Fira Code', monospace">CellCycleAggregator &#x2014; Bin by &#x3b8;</text>
+  <text x="956" y="458" fill="#64748b" font-size="10">&#x2192; per-stage mean, std &#x2192; stage_stats</text>
+
+  <!-- Arrow 6c→6d -->
+  <line x1="1340" y1="460" x2="1368" y2="460" stroke="#8b5cf6" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- STEP 6d: Stage4 Wrapper -->
+  <rect x="1378" y="395" width="380" height="90" rx="7" fill="#ffffff" stroke="#ddd6fe" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect x="1378" y="395" width="380" height="22" rx="7" fill="#8b5cf6" opacity="0.1"/>
+  <rect x="1378" y="407" width="380" height="10" fill="#8b5cf6" opacity="0.1"/>
+  <text x="1394" y="411" fill="#5b21b6" font-size="11" font-weight="700">STEP 6d: Strategy4 Wrapper</text>
+  <rect x="1670" y="399" width="75" height="18" rx="9" fill="#ede9fe"/>
+  <text x="1707" y="410" text-anchor="middle" fill="#6d28d9" font-size="8" font-weight="600">WRAPPER</text>
+  <text x="1394" y="436" fill="#475569" font-size="9.5" font-family="'SF Mono', 'Fira Code', monospace">run_strategy4_growth_stratified(X, Y, n_bins)</text>
+  <text x="1394" y="460" fill="#64748b" font-size="10">&#x2192; per-stage PCE input (Y binned by &#x3b8;)</text>
+
+  <!-- Arrow 6d→7b -->
+  <line x1="1350" y1="485" x2="1350" y2="510" stroke="#8b5cf6" stroke-width="1.5" marker-end="url(#arrow-purple)"/>
+
+  <!-- STEP 7b: PCE + Sobol on Strategy 4 -->
+  <rect x="940" y="515" width="818" height="110" rx="7" fill="#ffffff" stroke="#ddd6fe" stroke-width="1.2" filter="url(#shadow)"/>
+  <rect x="940" y="515" width="818" height="22" rx="7" fill="#8b5cf6" opacity="0.1"/>
+  <rect x="940" y="527" width="818" height="10" fill="#8b5cf6" opacity="0.1"/>
+  <text x="956" y="531" fill="#5b21b6" font-size="11" font-weight="700">STEP 7b: PCE + Sobol on Strategy 4</text>
+  <rect x="1670" y="519" width="75" height="18" rx="9" fill="#ede9fe"/>
+  <text x="1707" y="530" text-anchor="middle" fill="#6d28d9" font-size="8" font-weight="600">ANALYSIS</text>
+  <text x="956" y="558" fill="#475569" font-size="9.5" font-family="'SF Mono', 'Fira Code', monospace">generate_surrogate(param_space, f_stage4, sample_size)</text>
+  <text x="956" y="580" fill="#64748b" font-size="10" font-style="italic">"Which parameters drive variation WITHIN each cell cycle stage?"</text>
+  <text x="956" y="602" fill="#64748b" font-size="10">&#x2192; PCESurrogate (phenotypic) &#x2192; SobolIndices (phenotypic)</text>
+
+  <!-- Phase 2 outputs summary -->
+  <rect x="940" y="640" width="818" height="100" rx="7" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1"/>
+  <text x="956" y="661" fill="#5b21b6" font-size="11" font-weight="700">Phase 2 Outputs:</text>
+  <text x="956" y="681" fill="#475569" font-size="10">&#x251c; CellCycleResult (&#x3b8;, stages)&#x2003;&#x251c; per-stage statistics&#x2003;&#x251c; relevant observables</text>
+  <text x="956" y="701" fill="#475569" font-size="10">&#x251c; PCESurrogate (per-stage)&#x2003;&#x2514; SobolIndices (per-stage)</text>
+  <text x="956" y="725" fill="#64748b" font-size="9.5" font-style="italic">&#x2190; depends on Phase 1 residual_fraction via feedback loop</text>
+
+  <!-- ===== FEEDBACK LOOP ===== -->
+  <rect x="20" y="910" width="1760" height="65" rx="8" fill="#fefce8" stroke="#facc15" stroke-width="1.2"/>
+  <text x="40" y="932" fill="#854d0e" font-size="12" font-weight="700">FEEDBACK LOOP</text>
+  <text x="175" y="932" fill="#a16207" font-size="10">(variance decomposition &#x2192; Phase 2)</text>
+
+  <!-- Feedback flow arrows -->
+  <line x1="40" y1="950" x2="350" y2="950" stroke="#d97706" stroke-width="1.5"/>
+  <text x="60" y="963" fill="#78716c" font-size="9.5">Step 4 residual_fraction</text>
+  <line x1="350" y1="950" x2="730" y2="950" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+  <text x="400" y="963" fill="#78716c" font-size="9.5">&#x2192; Step 5b observable selection</text>
+  <line x1="740" y1="950" x2="1100" y2="950" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+  <text x="790" y="963" fill="#78716c" font-size="9.5">&#x2192; Step 6b growth &#x3b8;</text>
+  <line x1="1110" y1="950" x2="1500" y2="950" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+  <text x="1160" y="963" fill="#78716c" font-size="9.5">&#x2192; Step 6c/6d aggregation + wrapper</text>
+  <line x1="1510" y1="950" x2="1760" y2="950" stroke="#d97706" stroke-width="1.5" marker-end="url(#arrow-amber)"/>
+  <text x="1560" y="963" fill="#78716c" font-size="9.5">&#x2192; Step 7b Sobol</text>
+
+  <!-- ===== COMBINED OUTPUTS BAR ===== -->
+  <rect x="20" y="990" width="1760" height="145" rx="10" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" filter="url(#shadow-lg)"/>
+  <rect x="20" y="990" width="1760" height="28" rx="10" fill="#1e293b"/>
+  <rect x="20" y="1006" width="1760" height="12" fill="#1e293b"/>
+  <text x="900" y="1010" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="700">PIPELINE OUTPUTS (PipelineResult)</text>
+
+  <!-- Phase 1 outputs column -->
+  <text x="60" y="1042" fill="#1e40af" font-size="11" font-weight="700">From Phase 1 (Strategies 1-3):</text>
+  <text x="70" y="1062" fill="#475569" font-size="10">&#x251c; AggregatedOutput &#xd7; 3&#x2003;&#x251c; variance decomposition (fractions)&#x2003;&#x251c; MorrisIndices (parameter screening)</text>
+  <text x="70" y="1082" fill="#475569" font-size="10">&#x251c; PCESurrogate (bulk predictions)&#x2003;&#x251c; SobolIndices (bulk parameter rankings)&#x2003;&#x2514; report.html (interactive)</text>
+
+  <!-- Divider -->
+  <line x1="900" y1="1028" x2="900" y2="1125" stroke="#e2e8f0" stroke-width="1"/>
+
+  <!-- Phase 2 outputs column -->
+  <text x="940" y="1042" fill="#5b21b6" font-size="11" font-weight="700">From Phase 2 (Strategy 4 &#x2014; Cell Cycle):</text>
+  <text x="950" y="1062" fill="#475569" font-size="10">&#x251c; CellCycleResult (&#x3b8;, stages)&#x2003;&#x251c; per-stage statistics&#x2003;&#x251c; relevant observables (GSA-selected)</text>
+  <text x="950" y="1082" fill="#475569" font-size="10">&#x251c; PCESurrogate (per-stage)&#x2003;&#x2514; SobolIndices (per-stage)</text>
+
+  <!-- Key modules reference -->
+  <text x="60" y="1118" fill="#94a3b8" font-size="9.5" font-style="italic">Key modules: workflow.py (PyTUQ UQPC) | report.py (HTML) | growth.py (&#x3b8;-binning) | observables.py | remote.py (SMS-API) | multi_condition.py | cli.py</text>
+</svg>

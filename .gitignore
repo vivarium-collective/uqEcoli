@@ -162,6 +162,10 @@ venv.bak/
 # mkdocs documentation
 /site
 
+# But track our GH Pages demo content
+!/site/
+!/site/**
+
 # mypy
 .mypy_cache/
 .dmypy.json

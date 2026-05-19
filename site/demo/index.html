@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UQ for vEcoli — Demo Site</title>
+<style>
+:root {
+  --bg: #0f0f1a;
+  --surface: #1a1a2e;
+  --surface2: #222240;
+  --border: #2d2d50;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+.container { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+.header {
+  text-align: center;
+  padding: 48px 0 32px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 40px;
+}
+.header h1 {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, #ff3366, #00f0ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header .subtitle { color: var(--text-dim); font-size: 15px; }
+.section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  margin-bottom: 24px;
+}
+.section h2 {
+  font-size: 18px; font-weight: 600;
+  margin-bottom: 16px;
+  display: flex; align-items: center; gap: 10px;
+}
+.section h2 .badge {
+  font-size: 11px; background: var(--accent); color: #fff;
+  padding: 2px 8px; border-radius: 10px; font-weight: 500;
+}
+.section-desc {
+  color: var(--text-dim); font-size: 13px;
+  margin-bottom: 16px; line-height: 1.5;
+}
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+.card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  text-decoration: none;
+  color: var(--text);
+  transition: border-color 0.2s, transform 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+.card .card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent-light);
+}
+.card .card-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.card .card-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.footer {
+  text-align: center; padding: 32px 0 16px;
+  color: var(--text-dim); font-size: 12px;
+  border-top: 1px solid var(--border); margin-top: 24px;
+}
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  background: var(--surface2);
+  padding: 2px 6px; border-radius: 4px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <h1>uqEcoli Demo</h1>
+  <div class="subtitle">Uncertainty Quantification for the vEcoli Whole-Cell Model</div>
+</div>
+
+<div class="section">
+  <h2>Explore the UQ Pipeline</h2>
+  <div class="section-desc">
+    Interactive demos, screenshots, and reference material for the RFC006 UQ framework.
+    Everything here is generated from real pipeline runs and hosted statically on GitHub Pages.
+  </div>
+
+  <div class="card-grid">
+    <a href="uq-report.html" class="card">
+      <div class="card-title">UQ Report</div>
+      <div class="card-desc">Full interactive HTML report with Sobol bar charts, cell cycle heatmaps, and the PCE parameter explorer (client-side JS).</div>
+      <div class="card-meta">flagship &middot; interactive</div>
+    </a>
+    <a href="report_screens/" class="card">
+      <div class="card-title">Report Screenshots</div>
+      <div class="card-desc">Curated screenshots of the UQ report: parameter table, Sobol bars, heatmap, PCE explorer, provenance.</div>
+      <div class="card-meta">5 captures</div>
+    </a>
+    <a href="architecture/cli_cheatsheet.html" class="card">
+      <div class="card-title">CLI Reference</div>
+      <div class="card-desc">Complete reference for all 13 <code>uq</code> subcommands with descriptions, options, and usage examples.</div>
+      <div class="card-meta">cheatsheet</div>
+    </a>
+    <a href="architecture/rfc006_workflow.svg" class="card">
+      <div class="card-title">Pipeline Architecture</div>
+      <div class="card-desc">The full 7-step UQPC workflow diagram: parameter space &rarr; PCE surrogate &rarr; Sobol indices &rarr; cell cycle analysis.</div>
+      <div class="card-meta">SVG diagram</div>
+    </a>
+    <a href="marimo/" class="card">
+      <div class="card-title">Marimo Notebooks</div>
+      <div class="card-desc">Interactive notebooks exported as WASM — run PCE parameter exploration in your browser, no server needed.</div>
+      <div class="card-meta">WASM &middot; interactive</div>
+    </a>
+    <a href="tui/" class="card">
+      <div class="card-title">Terminal UI</div>
+      <div class="card-desc">The Textual-based TUI dashboard: parameter rankings, observable selector, live refresh. Installable via <code>pip</code>.</div>
+      <div class="card-meta">TUI &middot; screenshots</div>
+    </a>
+    <a href="cross_condition/" class="card">
+      <div class="card-title">Cross-Condition GSA</div>
+      <div class="card-desc">Multi-condition sensitivity analysis: rank stability, universal drivers, condition-specific parameter identification.</div>
+      <div class="card-meta">feature explainer</div>
+    </a>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Quick Start</h2>
+  <div class="section-desc">
+    Run the UQ pipeline on your own data:
+  </div>
+  <div style="background: var(--surface2); border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.8; overflow-x: auto;">
+    <div style="color: var(--text-dim);"># Install</div>
+    <div>pip install uqecoli</div>
+    <div style="color: var(--text-dim); margin-top: 8px;"># Stage 1 — sample + evaluate</div>
+    <div>uv run uq sample /path/to/simData.cPickle --n-samples 20 --live</div>
+    <div style="color: var(--text-dim); margin-top: 8px;"># Stage 2 — quantify</div>
+    <div>uv run uq quantify experiment_id --sim-base-path /path/to/sims --precomputed-path ./uq_cache</div>
+    <div style="color: var(--text-dim); margin-top: 8px;"># Generate report</div>
+    <div>uv run uq report --results-path ./uq_results</div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Resources</h2>
+  <div class="section-desc">Additional documentation and references.</div>
+  <div class="card-grid">
+    <a href="https://github.com/vivarium-collective/uqEcoli/tree/main/docs" class="card" target="_blank">
+      <div class="card-title">Sphinx Docs</div>
+      <div class="card-desc">Full API reference, tutorials, architecture docs, and changelog (via ReadTheDocs).</div>
+      <div class="card-meta">docs/</div>
+    </a>
+    <a href="https://github.com/vivarium-collective/uqEcoli" class="card" target="_blank">
+      <div class="card-title">GitHub Repo</div>
+      <div class="card-desc">Source code, issues, and contribution guide on GitHub.</div>
+      <div class="card-meta">external</div>
+    </a>
+  </div>
+</div>
+
+<div class="footer">
+  Generated from the <a href="https://github.com/vivarium-collective/uqEcoli" style="color: var(--accent-light);">uqEcoli</a> pipeline &mdash; <span id="date"></span>
+</div>
+
+</div>
+<script>document.getElementById('date').textContent = new Date().toISOString().split('T')[0];</script>
+</body>
+</html>

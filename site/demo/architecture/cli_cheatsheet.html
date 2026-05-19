@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UQ CLI Reference — uqEcoli</title>
+<style>
+:root {
+  --bg: #0f0f1a; --surface: #1a1a2e; --surface2: #222240;
+  --border: #2d2d50; --text: #e2e8f0; --text-dim: #94a3b8;
+  --accent: #6366f1; --accent-light: #818cf8;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.6;
+}
+.container { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+.header {
+  text-align: center; padding: 32px 0;
+  border-bottom: 1px solid var(--border); margin-bottom: 32px;
+}
+.header h1 { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+.header .subtitle { color: var(--text-dim); font-size: 14px; }
+.section {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 28px; margin-bottom: 24px;
+}
+.section h2 { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  text-align: left; padding: 10px 12px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-dim); font-weight: 600;
+  font-size: 11px; text-transform: uppercase;
+}
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+tr:hover { background: var(--surface2); }
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px; background: var(--surface2);
+  padding: 2px 6px; border-radius: 4px;
+}
+.cmd { font-weight: 600; color: var(--accent-light); white-space: nowrap; }
+.desc { color: var(--text); }
+.stage { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.tag {
+  display: inline-block; font-size: 10px; font-weight: 600;
+  padding: 1px 7px; border-radius: 8px; margin-right: 4px;
+}
+.tag-blue { background: rgba(99,102,241,0.2); color: var(--accent-light); }
+.tag-green { background: rgba(16,185,129,0.2); color: #34d399; }
+.tag-amber { background: rgba(245,158,11,0.2); color: #fbbf24; }
+.tag-red { background: rgba(239,68,68,0.2); color: #f87171; }
+.tag-purple { background: rgba(139,92,246,0.2); color: #a78bfa; }
+.footer {
+  text-align: center; padding: 24px 0;
+  color: var(--text-dim); font-size: 12px;
+  border-top: 1px solid var(--border); margin-top: 24px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+  <h1>uq CLI Reference</h1>
+  <div class="subtitle">All 13 subcommands of the scientifically transparent UQ for vEcoli CLI</div>
+</div>
+
+<div class="section">
+  <h2>Workflow Commands</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Stage</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="cmd">sample</span></td>
+        <td><span class="stage"><span class="tag tag-blue">P1</span> Steps 1-3</span></td>
+        <td><span class="desc">Generate LHS parameter samples via PCRV germ sampling, run vEcoli simulations (local subprocess or SMS-API remote), cache results. Core inputs: simData path, n_samples, observables.</span></td>
+      </tr>
+      <tr>
+        <td><span class="cmd">quantify</span></td>
+        <td><span class="stage"><span class="tag tag-blue">P1</span> Steps 4-5</span></td>
+        <td><span class="desc">Fit PCE surrogates (PyTUQ), compute Sobol indices across all 4 RFC006 aggregation strategies. Auto-generates report.html. Supports held-out validation (--n-test).</span></td>
+      </tr>
+      <tr>
+        <td><span class="cmd">report</span></td>
+        <td><span class="stage"><span class="tag tag-green">Output</span></span></td>
+        <td><span class="desc">Generate a self-contained HTML report from UQ results directory. Interactive PCE explorer with client-side JS Legendre evaluation. Works standalone from cached results.</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Interactive &amp; Visualization</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="cmd">dashboard</span></td>
+        <td><span class="tag tag-purple">GUI/Tk</span></td>
+        <td><span class="desc">Launch the UQ interactive dashboard (tkinter DAW by default). Loads uq_results.json + surrogate binaries for PCE response curves, observable waveform, sensitivity spectrogram.</span></td>
+      </tr>
+      <tr>
+        <td><span class="cmd">tui</span></td>
+        <td><span class="tag tag-amber">TUI</span></td>
+        <td><span class="desc">Launch the UQPC interactive terminal UI (Textual framework). Parameter importance table, observable selector, live mode with periodic refresh.</span></td>
+      </tr>
+      <tr>
+        <td><span class="cmd">gui</span></td>
+        <td><span class="tag tag-purple">GUI</span></td>
+        <td><span class="desc">Launch the UQPC interactive GUI (marimo). Reactive parameter sliders, response curves, multi-parameter drag interaction. Runs as a marimo notebook.</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Analysis &amp; Comparison</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="cmd">compare</span></td>
+        <td><span class="tag tag-blue">Analysis</span></td>
+        <td><span class="desc">Side-by-side Sobol comparison across multiple UQ experiments. Rank stability indicators, universal vs condition-specific top drivers. Takes directories of UQ results.</span></td>
+      </tr>
+      <tr>
+        <td><span class="cmd">export-figures</span></td>
+        <td><span class="tag tag-blue">Analysis</span></td>
+        <td><span class="desc">Generate publication-ready PDFs and LaTeX tables from UQ results. Sobol bar charts, heatmaps, cross-strategy comparison figures.</span></td>
+      </tr>
+      <tr>
+        <td><span class="cmd">suggest-experiment</span></td>
+        <td><span class="tag tag-amber">Experimental Design</span></td>
+        <td><span class="desc">Identify parameter region with maximum predictive uncertainty. Helps design the next round of experiments to reduce model uncertainty most efficiently.</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Remote Execution &amp; Data</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="cmd">fetch</span></td>
+        <td><span class="tag tag-red">SMS-API</span></td>
+        <td><span class="desc">Download and parse cd1 analysis TSVs from a completed SMS-API simulation. Works with --simulator-id. Integrates with PrecomputedCache for offline analysis.</span></td>
+      </tr>
+      <tr>
+        <td><span class="cmd">show-config</span></td>
+        <td><span class="tag tag-green">Utility</span></td>
+        <td><span class="desc">Preview the full vEcoli workflow config JSON that `sample` would pass. Useful for debugging variant parameter mutations and analysis options before running.</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Setup &amp; Help</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="cmd">init</span></td>
+        <td><span class="tag tag-green">Setup</span></td>
+        <td><span class="desc">Guided setup wizard — configure a UQ project interactively. Walks through simData path, parameter selection, observable presets, and output directory.</span></td>
+      </tr>
+      <tr>
+        <td><span class="cmd">help</span></td>
+        <td><span class="tag tag-green">Utility</span></td>
+        <td><span class="desc">Show help for a specific subcommand or the main CLI. Every subcommand also accepts a trailing `help` alias for `--help` (e.g., `uq sample help`).</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Common Options</h2>
+  <table>
+    <thead><tr><th>Option</th><th>Applies to</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>--n-samples N</code></td><td>sample</td><td>Number of LHS samples (default: 20)</td></tr>
+      <tr><td><code>--n-test N</code></td><td>sample</td><td>Extra held-out validation samples (UQPC --ntst)</td></tr>
+      <tr><td><code>--observables</code></td><td>sample</td><td>Observable preset(s): mass, higher_order, exchange_fluxes, transcriptome, proteome, fluxome</td></tr>
+      <tr><td><code>--params-file</code></td><td>sample</td><td>JSON file with custom SimDataParameter definitions</td></tr>
+      <tr><td><code>--api-url</code></td><td>sample, fetch</td><td>SMS-API base URL for remote execution</td></tr>
+      <tr><td><code>--conditions</code></td><td>sample, quantify</td><td>RNA-seq dataset IDs for multi-condition UQ</td></tr>
+      <tr><td><code>--regression</code></td><td>quantify</td><td>PCE solver: lsq (default), bcs (sparse), anl (analytical)</td></tr>
+      <tr><td><code>--polynomial-order</code></td><td>quantify</td><td>PCE polynomial order (default: 2)</td></tr>
+      <tr><td><code>--no-perturbation</code></td><td>quantify</td><td>Q1 variance budget mode (baseline without parameter perturbation)</td></tr>
+      <tr><td><code>--output-pca K</code></td><td>quantify</td><td>Output-side PCA with K components (scree + loading analysis)</td></tr>
+      <tr><td><code>--run-mode</code></td><td>dashboard</td><td>tk (default) or mo (marimo)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Typical Usage</h2>
+  <div style="background: var(--surface2); border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 2; overflow-x: auto;">
+    <div style="color: var(--text-dim);"># Full two-stage UQ pipeline</div>
+    <div>uv run uq sample /path/to/simData.cPickle --n-samples 50 --live</div>
+    <div>uv run uq quantify experiment_id --sim-base-path /path/to/sims</div>
+    <div>uv run uq report --results-path ./uq_results</div>
+    <div style="color: var(--text-dim); margin-top: 8px;"># Interactive exploration</div>
+    <div>uv run uq dashboard --run-mode mo   # Marimo GUI</div>
+    <div>uv run uq tui                       # Terminal UI</div>
+    <div style="color: var(--text-dim); margin-top: 8px;"># Remote execution via SMS-API</div>
+    <div>uv run uq sample /path/to/simData.cPickle --api-url http://sms.example.com --simulator-id 11</div>
+    <div>uv run uq fetch 48 --api-url http://sms.example.com</div>
+  </div>
+</div>
+
+<div class="footer">
+  <a href="../index.html" style="color: var(--accent-light);">&larr; Back to Demo Home</a>
+  &nbsp;&middot;&nbsp;
+  <a href="rfc006_workflow.svg" style="color: var(--accent-light);">Pipeline Architecture SVG</a>
+  &nbsp;&middot;&nbsp;
+  Generated from <code>uq --help</code>
+</div>
+</div>
+</body>
+</html>

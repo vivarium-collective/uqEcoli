@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>uqEcoli — Uncertainty Quantification for vEcoli</title>
+<style>
+:root { --bg: #0f0f1a; --surface: #1a1a2e; --border: #2d2d50; --text: #e2e8f0; --text-dim: #94a3b8; --accent: #6366f1; --accent-light: #818cf8; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.6;
+  display: flex; align-items: center; justify-content: center; min-height: 100vh;
+}
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; padding: 48px 40px; max-width: 500px;
+  text-align: center; margin: 24px;
+}
+h1 {
+  font-size: 28px; font-weight: 700; margin-bottom: 8px;
+  background: linear-gradient(135deg, #ff3366, #00f0ff);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+p { color: var(--text-dim); font-size: 14px; margin-bottom: 24px; }
+.links { display: flex; flex-direction: column; gap: 12px; }
+.links a {
+  display: block; padding: 12px 20px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--accent-light);
+  text-decoration: none; font-size: 14px; font-weight: 500;
+  transition: border-color 0.2s;
+}
+.links a:hover { border-color: var(--accent); }
+.links a small { display: block; color: var(--text-dim); font-weight: 400; font-size: 12px; margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>uqEcoli</h1>
+  <p>Uncertainty Quantification for the vEcoli Whole-Cell Model</p>
+  <div class="links">
+    <a href="demo/">Demo Site &nearr;<small>Interactive report, screenshots, WASM notebooks, CLI reference</small></a>
+    <a href="https://github.com/vivarium-collective/uqEcoli" target="_blank">GitHub Repo &nearr;<small>Source code, issues, contribution guide</small></a>
+  </div>
+</div>
+</body>
+</html>
