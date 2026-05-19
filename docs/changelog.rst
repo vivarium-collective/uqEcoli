@@ -3,8 +3,42 @@ Changelog
 
 All notable changes to the vEcoli UQ Framework.
 
+[0.2.1] - 2026-05-19
+--------------------
+
+Hotfix and demo site release.
+
+Added
+^^^^^
+
+**Demo Site** (``site/``)
+
+* ``site/demo/`` — GH Pages demo directory at ``/uqEcoli/demo/``
+* Landing page with card grid (active + greyed-out placeholder cards)
+* Interactive CLI cheatsheet (``cli_cheatsheet.html``)
+* Pipeline architecture section with collapsible SVG diagram inline in report
+* "How to Read Sobol Indices" explainer box with plain-English definitions
+* CLI command reference table (12 subcommands) embedded in report
+* Sphinx docs + demo site links in provenance section
+* Sticky nav bar with jump-to anchors on all major report sections
+* WASM-exported marimo notebook (``reactive.wasm.html``) for client-side Pyodide
+* README placeholders for report screenshots, marimo gallery, TUI, and cross-condition GSA
+
+**GH Pages Deployment**
+
+* ``.github/workflows/static-report.yml`` now deploys ``./site`` instead of ``./reports``
+* ``.nojekyll`` marker and root redirect (``/`` → ``/demo/``)
+
+Fixed
+^^^^^
+
+* PCE profile chart Y-axis: replaced ``toFixed(2)`` with adaptive ``fmtTick()`` showing
+  full precision for small values (was showing ``0.00`` for near-zero observables)
+* Added ``Predicted Value`` Y-axis label to match X-axis ``Cell Cycle Progress (θ)``
+* Increased left chart margin from 60 to 70 for longer tick labels
+
 [0.2.0] - 2026-05-19
--------------------
+---------------------
 
 Major feature release with Q1 baseline, output PCA, SMS-API remote execution,
 cross-condition GSA, interactive marimo tutorials, and an interactive HTML report.
