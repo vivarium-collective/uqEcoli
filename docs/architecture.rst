@@ -20,9 +20,12 @@ Walkthrough
    metabolism (FBA tuning), and cell composition (dry mass fraction).
 
 2. **Load Simulation Data** — Parquet timeseries loaded via hive
-   partitioning.  Each sample is a full vEcoli whole-cell simulation
-   executed as a subprocess through ``runscripts/workflow.py`` with the
-   ``sim_data_setattr`` variant mechanism.
+   partitioning (vEcoli) or direct state traversal (v2ecoli).  Each sample
+   is a full whole-cell simulation executed either as a subprocess through
+   ``runscripts/workflow.py`` (vEcoli) or in-process via a process-bigraph
+   composite (v2ecoli).  Parameter mutations use the vEcoli
+   ``sim_data_setattr`` variant mechanism or in-memory dot-path mutation
+   on a cache bundle respectively.
 
 3. **Aggregation Strategies 1--3** — three parallel views of the same
    simulation output:
@@ -89,14 +92,17 @@ for the ``uq report`` command.
 Key modules
 -----------
 
-====================  ================================================
-Module                Role
-====================  ================================================
-``uq/workflow.py``    PyTUQ UQPC pipeline (sample + quantify)
-``uq/report.py``      Self-contained HTML report generator
-``uq/cli.py``         Typer CLI (all commands)
-``uq/growth.py``      Growth-stage theta binning
-``uq/observables.py`` Observable presets + collection
-``uq/remote.py``      SMS-API client for remote execution
+=========================  ================================================
+Module                     Role
+=========================  ================================================
+``uq/workflow.py``         PyTUQ UQPC pipeline (sample + quantify)
+``uq/report.py``           Self-contained HTML report generator
+``uq/cli.py``              Typer CLI (all commands)
+``uq/growth.py``           Growth-stage theta binning
+``uq/observables.py``      Observable presets + collection
+``uq/remote.py``           SMS-API client for remote execution
 ``uq/multi_condition.py``  Cross-condition GSA
-====================  ================================================
+``uq/v2ecoli_bridge.py``   Observable path maps for v2ecoli backend
+``uq/generators/v2ecoli.py``  v2ecoli in-process simulation generator
+``uq/generators/vecoli.py``   vEcoli subprocess simulation generator (deprecated)
+=========================  ================================================

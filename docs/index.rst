@@ -2,11 +2,11 @@ uqEcoli — UQ for the vEcoli whole-cell model
 ============================================
 
 ``uqEcoli`` is a thin glue layer between **vEcoli**
-(<https://covertlab.github.io/vEcoli/>) and **PyTUQ's UQPC workflow**
+(<https://covertlab.github.io/vEcoli/>) or **v2ecoli** (in-process
+process-bigraph composites) and **PyTUQ's UQPC workflow**
 (<https://sandialabs.github.io/pytuq/apps/uqpc.html>).  It turns the
 six-step UQPC pipeline (setup → sample → evaluate → surrogate → error →
-Sobol) into a two-command CLI backed by vEcoli's Nextflow-driven
-simulations.
+Sobol) into a two-command CLI with two simulation backends:
 
 .. important::
 
@@ -20,7 +20,9 @@ Two-stage workflow
 
 .. code-block:: bash
 
-   # Stage 1 — UQPC steps 1-3: germ sampling + vEcoli evaluation
+   # Stage 1 — UQPC steps 1-3: germ sampling + simulation evaluation
+   # Two backends: --backend vecoli (legacy subprocess, default) or
+   #               --backend v2ecoli (in-process, preferred)
    uv run uq sample /path/to/simData.cPickle \
        --cache-dir ./uq_cache \
        --n-samples 200 \
@@ -29,7 +31,8 @@ Two-stage workflow
        --observables higher_order \
        --observables exchange_fluxes \
        --observables transcriptome \
-       --generation-lower-bound 2
+       --generation-lower-bound 2 \
+       --backend v2ecoli
 
    # Stage 2 — UQPC steps 4-5: PCE surrogate fit + Sobol decomposition
    uv run uq quantify /path/to/simData.cPickle \
@@ -44,7 +47,7 @@ the full mathematical walkthrough.
 Why two stages?
 ---------------
 
-The expensive operation is step 3 (running vEcoli).  Caching its output
+The expensive operation is step 3 (running the simulation).  Caching its output
 means you can iterate freely on PCE order, regression backend, or
 aggregation strategy without re-simulating.  The cache directory
 contains ``X.npy``, ``Y.npy``, ``germ_train.npy``, optional

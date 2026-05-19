@@ -3,6 +3,78 @@ Changelog
 
 All notable changes to the vEcoli UQ Framework.
 
+[0.3.0] - 2026-05-19
+--------------------
+
+v2ecoli backend migration (in-process, process-bigraph composites).
+
+Added
+^^^^^
+
+**v2ecoli in-process backend** (``uq/generators/v2ecoli.py``)
+
+* ``V2ecoliGenerator`` — drop-in replacement for ``TimeseriesGeneratorVecoli``
+  using in-process process-bigraph composites (no subprocess, no Nextflow)
+* ``generate_cache_bundle()`` — wraps ``v2ecoli.core.save_cache()``
+* ``build_v2ecoli_composite()`` — builds v2ecoli baseline composite from
+  cache bundle with optional dot-path mutations
+* ``run_v2ecoli_composite()`` — tick-loop with division detection and
+  observable extraction (mass, higher_order, transcriptome, proteome,
+  fluxome, exchange_fluxes)
+* ``_apply_mutation_to_configs()`` — maps UQ dot-path mutations to
+  v2ecoli process config keys (metabolism, transcription, translation,
+  mass)
+* Multiprocessing via ``ProcessPoolExecutor`` (``_run_batch_parallel``)
+
+**Observable bridge** (``uq/v2ecoli_bridge.py``)
+
+* ``OBSERVABLE_PATHS`` — scalar state-path map (mass scalars, growth,
+  division)
+* ``ARRAY_OBSERVABLE_PATHS`` — array state-path map (transcriptome,
+  proteome, fluxome, exchange_fluxes)
+* ``get_array_observable_from_state()`` — extracts numpy arrays from
+  composite state, flattened to indexed columns
+* ``PRESET_MAP`` now covers all 6 presets: mass, higher_order,
+  transcriptome, proteome, fluxome, exchange_fluxes
+
+**CLI** (``uq/cli.py``)
+
+* ``--backend {vecoli,v2ecoli}`` flag on ``uq sample``
+* ``--max-workers N`` for v2ecoli parallel execution
+* ``_sample_v2ecoli()`` — end-to-end v2ecoli sampling path
+
+**Remote execution** (``uq/remote.py``)
+
+* ``SmsApiClient.submit_v2ecoli()`` — submits cache bundle + mutations
+  to SMS-API as multipart upload
+
+**Process-bigraph integration** (``pbg_uqEcoli/``)
+
+* ``UQPipeline(Process)`` — wraps the full UQ pipeline as a
+  process-bigraph Process with v2ecoli backend support
+* ``pipeline_document()`` — composite document generator
+* ``build_core()`` — core builder with ECOLI_TYPES registration
+
+Changed
+^^^^^^^
+
+* ``libuq/generators/vecoli.py`` — ``TimeseriesGeneratorVecoli`` marked as
+  deprecated (use ``V2ecoliGenerator`` with ``--backend v2ecoli`` instead)
+* ``libuq/wrappers.py`` — ``SimulationWrapper`` marked as deprecated
+* ``SAMPLING.md`` — added Section 7 documenting the v2ecoli backend
+  architecture, key source files, and usage
+
+Tests
+^^^^^
+
+* ``tests/test_v2ecoli_generator.py`` — 31 unit tests covering mutation
+  logic, bundle deep-copy, V2ecoliGenerator construction,
+  extract_timeseries, observable path mapping, array extraction,
+  and import chains
+* ``tests/test_backend_parity.py`` — regression test stubs for
+  single-sample, Sobol, and aggregation metadata parity
+  (requires ``simData.cPickle``)
+
 [0.2.1] - 2026-05-19
 --------------------
 

@@ -1,26 +1,37 @@
 Getting Started
 ===============
 
-This guide walks through the shortest path from "I have vEcoli and a
-``simData.cPickle``" to "I have PCE Sobol indices for five sim_data
-parameters."
+This guide walks through the shortest path from "I have a simulation
+and a ``simData.cPickle``" to "I have PCE Sobol indices for five
+sim_data parameters."
 
 Prerequisites
 -------------
 
-1. A working **vEcoli** checkout at ``../vEcoli`` (editable install).
-2. A pre-computed ``simData.cPickle`` produced by vEcoli's Parca
-   (for example ``../vEcoli/reconstruction/sim_data/kb/simData.cPickle``).
-3. ``uv`` installed (https://docs.astral.sh/uv/).
+The repository supports two simulation backends:
+
+**vEcoli backend** (``--backend vecoli``, default)
+   1. A working **vEcoli** checkout at ``../vEcoli`` (editable install).
+   2. A pre-computed ``simData.cPickle`` produced by vEcoli's Parca
+      (for example ``../vEcoli/reconstruction/sim_data/kb/simData.cPickle``).
+
+**v2ecoli backend** (``--backend v2ecoli``, preferred)
+   1. A working **v2ecoli** checkout at ``../v2ecoli`` (editable install).
+   2. A pre-computed ``simData.cPickle`` (same format; v2ecoli converts
+      it to a cache bundle at runtime).
+
+Both backends share the same ``simData.cPickle`` format and the same
+``uq quantify`` / ``uq report`` pipeline — only the execution engine
+differs.
 
 .. code-block:: bash
 
    git clone https://github.com/.../uqEcoli.git
    cd uqEcoli
-   uv sync --all-groups --all-extras
+   uv sync --all-extras
 
-This repository depends on vEcoli as an editable package, so no further
-installation of vEcoli is needed as long as the path above is correct.
+This repository depends on vEcoli (and optionally v2ecoli) as editable
+packages installed alongside it.
 
 The two-stage workflow
 ----------------------

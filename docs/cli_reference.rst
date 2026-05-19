@@ -13,7 +13,7 @@ Top-level
 
    Commands:
      help              Show help for a specific subcommand, or the main CLI.
-     sample            UQPC Steps 1-3: sample via PCRV.sampleGerm(), run vEcoli (local or remote).
+      sample            UQPC Steps 1-3: sample via PCRV.sampleGerm(), run vEcoli or v2ecoli (local or remote).
      quantify          UQPC Steps 4-5: fit PCE surrogates, compute Sobol (all 4 strategies).
      report            Generate a self-contained HTML report from UQ results.
      fetch             Download cd1 analysis outputs from a completed SMS-API simulation.
@@ -44,7 +44,8 @@ works at any nesting level, mirroring the Atlantis CLI pattern.
 -------------
 
 UQPC steps 1-3.  Sets up the input PC, draws germ samples, and evaluates
-vEcoli through ``runscripts/workflow.py``.
+the simulation through vEcoli (subprocess via ``runscripts/workflow.py``)
+or v2ecoli (in-process via process-bigraph composite).
 
 .. code-block:: text
 
@@ -115,6 +116,21 @@ Options:
             --observables transcriptome \
             --observables proteome \
             --observables fluxome
+
+``--backend [vecoli|v2ecoli]``
+    Simulation backend for generating samples:
+
+    * ``vecoli`` (default) — subprocess execution via ``runscripts/workflow.py``,
+      Parquet output, Nextflow-managed parallelism.
+    * ``v2ecoli`` — in-process execution via process-bigraph composite,
+      direct state traversal for observable extraction,
+      ``ProcessPoolExecutor`` parallelism (controlled by ``--max-workers``).
+      Preferred for new work.
+
+``--max-workers INTEGER``
+    Maximum parallel workers for the v2ecoli backend.  Only used when
+    ``--backend v2ecoli``.  Controls the ``ProcessPoolExecutor`` concurrency
+    level.  Default ``1``.
 
 ``--generation-lower-bound INTEGER``
     Skip generations below this value when aggregating observables.
@@ -358,7 +374,8 @@ Options:
 ------------------
 
 Generates the full vEcoli workflow config JSON that ``uq sample`` would
-pass to ``runscripts/workflow.py``, **without running anything**.  Useful
+pass to the simulation backend (``runscripts/workflow.py`` for vEcoli,
+or the v2ecoli composite builder), **without running anything**.  Useful
 for stakeholder review, debugging, or manual execution.
 
 .. code-block:: text
@@ -428,12 +445,25 @@ Everything in the CLI delegates to two functions:
 
    from uq.workflow import sample, quantify
 
+   # vEcoli backend (default)
    cache = sample(
        sim_data_path="/path/to/simData.cPickle",
        cache_dir="./uq_cache",
        n_samples=200,
        generations=2,
    )
+
+   # v2ecoli in-process backend
+   cache = sample(
+       sim_data_path="/path/to/simData.cPickle",
+       cache_dir="./uq_cache",
+       n_samples=200,
+       generations=2,
+       backend="v2ecoli",
+       max_workers=4,
+   )
+
+   # quantify is backend-agnostic — same cache format
    result = quantify(
        cache_dir="./uq_cache",
        sim_data_path="/path/to/simData.cPickle",

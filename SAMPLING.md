@@ -287,3 +287,68 @@ This repo's value-add is not in re-implementing UQ primitives; it is in the
 
 Everything else — the polynomial algebra, the sampling, the simulation —
 belongs to the upstream projects.
+
+---
+
+## 7. v2ecoli backend (`--backend v2ecoli`)
+
+An alternative in-process execution backend replaces the subprocess + Nextflow
+orchestration with a **process-bigraph composite** (`v2ecoli`).  This is the
+preferred backend for new work.
+
+### What changes
+
+| Concern | vEcoli (legacy) | v2ecoli (preferred) |
+| --- | --- | --- |
+| Execution | `subprocess.run(workflow.py --config ...)` | In-process `Composite.run(interval)` |
+| Mutation | `sim_data_setattr` variant function on sim_data | In-memory `apply_mutations_to_configs()` on cache bundle |
+| Observable extraction | `polars.read_parquet()` on hive-partitioned Parquet | Direct state traversal of `composite.state['agents']` |
+| Parallelism | Nextflow-managed | `ProcessPoolExecutor` with `--max-workers N` |
+| Dependency | vEcoli repo, Nextflow, Parca | v2ecoli package (`uv add ../v2ecoli --editable`) |
+
+### Architecture
+
+```
+uq sample --backend v2ecoli
+  ↓
+LHS / PCRV sampling  ──>  X (n_samples × n_params)
+  ↓
+_sample_v2ecoli()
+  └─ generate_cache_bundle(sim_data_path, cache_dir)
+  │   → cache_dir/{initial_state.json, sim_data_cache.dill}
+  └─ V2ecoliGenerator(cache_dir)._run_batch(X)
+      └─ For each sample:
+          1. Load baseline cache bundle (memoized)
+          2. Deep-copy configs dict, apply dot-path mutations
+          3. Build v2ecoli baseline composite
+          4. Run for N generations (tick loop)
+          5. Extract observables from composite.state
+      └─ Collect Y_aggregated, Y_timeseries, Y_meta
+  ↓
+PrecomputedCache (X, Y, timeseries, metadata)
+```
+
+### Key source files
+
+- `uq/generators/v2ecoli.py` — `V2ecoliGenerator`, cache bundle generation,
+  mutation logic, composite builder, tick-loop runner
+- `uq/v2ecoli_bridge.py` — Observable path map (`OBSERVABLE_PATHS`) connecting
+  UQ observable names to v2ecoli state traversal paths
+
+### Usage
+
+```bash
+uv run uq sample api_simulation_default \
+    --sim-base-path /path/to/sims \
+    --cache-dir ./uq_cache \
+    --n-samples 20 \
+    --backend v2ecoli \
+    --max-workers 4
+
+uv run uq quantify api_simulation_default \
+    --sim-base-path /path/to/sims \
+    --precomputed-path ./uq_cache
+```
+
+The `quantify` command is backend-agnostic — it reads the same
+`PrecomputedCache` format regardless of how the samples were generated.
