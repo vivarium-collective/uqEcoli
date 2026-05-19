@@ -230,6 +230,7 @@ uq_results/
 
 .claude/
 ./todo.md
+./SAVE_SLOT.md
 uq_cache/
 kb/
 output/
