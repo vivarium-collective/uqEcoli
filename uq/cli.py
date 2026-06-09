@@ -48,6 +48,20 @@ app = typer.Typer(
     ),
 )
 
+# `uq create ...` subgroup — generators for UQ artifacts (params files,
+# configs, etc.). Add new subcommands here as `@create_app.command(...)`.
+create_app = typer.Typer(
+    help=(
+        "Generate UQ artifacts from a simData baseline.\n\n"
+        "Subcommands produce config/params files that the rest of the CLI "
+        "consumes (``uq sample --params-file``, ``--base-config``, etc.) — "
+        "letting you keep selection logic (which sim_data attrs to perturb, "
+        "what bounds, what literature ranges) in user-readable Python or "
+        "JSON rather than re-typing into CLI flags."
+    ),
+)
+app.add_typer(create_app, name="create")
+
 
 # ── sample: reuse uq sample directly ────────────────────────────────
 
@@ -144,6 +158,23 @@ def sample(
         "M × N × n_init_sims × generations. `uq quantify` auto-detects the "
         "multi-condition cache and computes per-condition PCEs + "
         "cross-condition Sobol comparison. Local --backend vecoli only.",
+    ),
+    max_condition_parallel: int | None = typer.Option(
+        None,
+        "--max-condition-parallel",
+        help="Max conditions to run concurrently under --design-config "
+        "(§25-F). When None (default), auto-sized from "
+        "min(M, cpu_count/cpus_per_workflow, available_RAM/memory_per_workflow, 4). "
+        "Set to 1 for serial execution (useful for debugging). Within each "
+        "condition, Nextflow still parallelizes variants × seeds × generations.",
+    ),
+    memory_per_workflow_gb: float = typer.Option(
+        3.0,
+        "--memory-per-workflow-gb",
+        help="Estimated RAM per concurrent vEcoli workflow (GB) for the "
+        "--max-condition-parallel auto-sizer. Default 3 GB (calibrated for "
+        "the `mass` observable preset). Bump for transcriptome/proteome "
+        "sweeps (typically 6-8 GB).",
     ),
 ) -> None:
     """UQPC Steps 1-3: sample via PCRV.sampleGerm(), run vEcoli.
@@ -398,6 +429,8 @@ def sample(
             observables=observables,
             generation_lower_bound=generation_lower_bound,
             seed=seed,
+            max_condition_parallel=max_condition_parallel,
+            memory_per_workflow_gb=memory_per_workflow_gb,
         )
         return
 
@@ -621,8 +654,23 @@ def _sample_local(
     germ_test: np.ndarray | None,
     bounds: np.ndarray,
     seed: int,
+    experiment_id: str = "uqpc_batch",
+    quiet: bool = False,
+    log_path: str | None = None,
 ) -> None:
-    """Step 3 (local): subprocess vEcoli via runscripts/workflow.py."""
+    """Step 3 (local): subprocess vEcoli via runscripts/workflow.py.
+
+    Args:
+        experiment_id: vEcoli experiment_id passed through to the workflow
+            config. Default ``"uqpc_batch"``. Under concurrent design-config
+            execution, set to the per-condition ID so each worker has its
+            own ``nextflow_temp/{experiment_id}/`` scratch directory.
+        quiet: When True, suppress Rich progress UI and write all subprocess
+            output to ``log_path`` instead. Used by concurrent workers (§25-F)
+            to avoid interleaved Rich rendering from multiple workflows.
+        log_path: Where to write subprocess stdout/stderr when ``quiet=True``.
+            Defaults to ``cache_path / "_log.txt"``.
+    """
     import json as _json
     import os
     import re
@@ -641,13 +689,19 @@ def _sample_local(
         _get_vecoli_root,
     )
 
+    def _emit(msg: str) -> None:
+        """Console output that respects quiet mode."""
+        if not quiet:
+            console.print(msg)
+
+    log_file = Path(log_path) if log_path else (cache_path / "_log.txt")
+
     batch_dir = cache_path / "_batch"
     if batch_dir.exists():
         shutil.rmtree(batch_dir)
     batch_dir.mkdir(parents=True, exist_ok=True)
     output_dir = batch_dir / "output"
     output_dir.mkdir(exist_ok=True)
-    experiment_id = "uqpc_batch"
 
     variants = _build_variants_from_samples(X_all, param_space._sim_data_parameters)
     config = _build_config(
@@ -663,9 +717,9 @@ def _sample_local(
     )
     config_path = batch_dir / "workflow_config.json"
     config_path.write_text(_json.dumps(config, indent=2))
-    console.print(f"  [dim]Config JSON: {config_path}[/dim]")
+    _emit(f"  [dim]Config JSON: {config_path}[/dim]")
     if conditions:
-        console.print(f"  [dim]Multi-condition: {len(conditions)} parca_variants[/dim]")
+        _emit(f"  [dim]Multi-condition: {len(conditions)} parca_variants[/dim]")
 
     # Save conditions metadata for quantify to detect multi-condition cache
     if conditions:
@@ -682,7 +736,7 @@ def _sample_local(
     history_base = output_dir / experiment_id / "history"
     ansi_re = re.compile(r"\x1b\[[\d;]*[A-Za-z]|\x1b\[\d*[A-GJK]|\x07")
 
-    console.print(f"[dim]Step 3: running vEcoli workflow.py ({total_sims} sims)...[/dim]")
+    _emit(f"[dim]Step 3: running vEcoli workflow.py ({total_sims} sims)...[/dim]")
 
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
@@ -692,75 +746,97 @@ def _sample_local(
     workflow_script = os.path.join(vecoli_root, "runscripts", "workflow.py")
     cmd = [sys.executable, workflow_script, "--config", str(config_path)]
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=vecoli_root,
-        env=env,
-    )
-
-    with Progress(
-        SpinnerColumn("dots", style="bold magenta"),
-        TextColumn("[bold cyan]{task.description:<50}"),
-        BarColumn(bar_width=30, complete_style="green", finished_style="green"),
-        TextColumn("[bold green]{task.percentage:>5.1f}%"),
-        TextColumn("[dim]|[/dim]"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
-        task = progress.add_task("Launching Nextflow", total=total_sims)
-        start = _time.monotonic()
-
-        while proc.poll() is None:
-            # Read available stdout
-            if proc.stdout is not None:
-                fd = proc.stdout.fileno()
-                try:
-                    chunk = os.read(fd, 8192)
-                except OSError:
-                    chunk = b""
-                if chunk:
-                    for raw_line in chunk.decode("utf-8", errors="replace").splitlines():
-                        clean = ansi_re.sub("", raw_line).strip()
-                        if not clean:
-                            continue
-                        low = clean.lower()
-                        if any(kw in low for kw in ["error", "fail", "exception"]):
-                            console.print(f"  [red]{clean}[/red]")
-                        elif any(kw in low for kw in ["completed at", "duration", "succeeded"]):
-                            console.print(f"  [green]{clean}[/green]")
-                        elif any(kw in low for kw in ["warn", "note"]):
-                            console.print(f"  [yellow]{clean}[/yellow]")
-                        else:
-                            console.print(f"  [dim]{clean}[/dim]")
-
-            # Poll completed variants
-            n_done = _count_completed_variants(history_base)
-            elapsed = int(_time.monotonic() - start)
-            progress.update(
-                task,
-                completed=n_done,
-                description=f"Simulating  {n_done}/{total_sims}  [{elapsed}s]",
+    if quiet:
+        # Concurrent-worker path: no Rich UI, capture all subprocess output
+        # to log_file. Used by §25-F's ProcessPoolExecutor so per-condition
+        # logs don't interleave on the parent's console.
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with log_file.open("ab") as lf:
+            lf.write(f"=== {experiment_id}: running workflow.py ({total_sims} sims) ===\n".encode())
+            proc = subprocess.Popen(
+                cmd,
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                cwd=vecoli_root,
+                env=env,
             )
-            _time.sleep(0.5)
+            exit_code = proc.wait()
+            lf.write(f"=== {experiment_id}: workflow.py exit code {exit_code} ===\n".encode())
+        if exit_code != 0:
+            # In quiet mode, signal failure by raising — the worker catches
+            # this and writes a _FAILED marker with the exit code.
+            raise RuntimeError(
+                f"vEcoli workflow.py exited with code {exit_code} for "
+                f"experiment_id={experiment_id!r}; see {log_file}"
+            )
+    else:
+        # Interactive path: Rich progress bar + live stdout categorization.
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=vecoli_root,
+            env=env,
+        )
 
-    # Drain remaining stdout
-    if proc.stdout is not None:
-        remaining = proc.stdout.read()
-        if remaining:
-            for raw_line in remaining.decode("utf-8", errors="replace").splitlines():
-                clean = ansi_re.sub("", raw_line).strip()
-                if clean:
-                    console.print(f"  [dim]{clean}[/dim]")
+        with Progress(
+            SpinnerColumn("dots", style="bold magenta"),
+            TextColumn("[bold cyan]{task.description:<50}"),
+            BarColumn(bar_width=30, complete_style="green", finished_style="green"),
+            TextColumn("[bold green]{task.percentage:>5.1f}%"),
+            TextColumn("[dim]|[/dim]"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Launching Nextflow", total=total_sims)
+            start = _time.monotonic()
 
-    exit_code = proc.returncode
-    if exit_code != 0:
-        console.print(f"[yellow]workflow.py exited with code {exit_code}[/yellow]")
+            while proc.poll() is None:
+                if proc.stdout is not None:
+                    fd = proc.stdout.fileno()
+                    try:
+                        chunk = os.read(fd, 8192)
+                    except OSError:
+                        chunk = b""
+                    if chunk:
+                        for raw_line in chunk.decode("utf-8", errors="replace").splitlines():
+                            clean = ansi_re.sub("", raw_line).strip()
+                            if not clean:
+                                continue
+                            low = clean.lower()
+                            if any(kw in low for kw in ["error", "fail", "exception"]):
+                                console.print(f"  [red]{clean}[/red]")
+                            elif any(kw in low for kw in ["completed at", "duration", "succeeded"]):
+                                console.print(f"  [green]{clean}[/green]")
+                            elif any(kw in low for kw in ["warn", "note"]):
+                                console.print(f"  [yellow]{clean}[/yellow]")
+                            else:
+                                console.print(f"  [dim]{clean}[/dim]")
+
+                n_done = _count_completed_variants(history_base)
+                elapsed = int(_time.monotonic() - start)
+                progress.update(
+                    task,
+                    completed=n_done,
+                    description=f"Simulating  {n_done}/{total_sims}  [{elapsed}s]",
+                )
+                _time.sleep(0.5)
+
+        if proc.stdout is not None:
+            remaining = proc.stdout.read()
+            if remaining:
+                for raw_line in remaining.decode("utf-8", errors="replace").splitlines():
+                    clean = ansi_re.sub("", raw_line).strip()
+                    if clean:
+                        console.print(f"  [dim]{clean}[/dim]")
+
+        exit_code = proc.returncode
+        if exit_code != 0:
+            console.print(f"[yellow]workflow.py exited with code {exit_code}[/yellow]")
 
     # ── Step 4: Collect + cache ──
-    console.print("[dim]Collecting Parquet outputs...[/dim]")
+    _emit("[dim]Collecting Parquet outputs...[/dim]")
     if not history_base.exists():
         candidates = list(output_dir.glob("*/history"))
         if candidates:
@@ -768,7 +844,7 @@ def _sample_local(
 
     from uq.observables import collect_observables
 
-    console.print(f"[dim]Observables: {observables}, gen_lower_bound={generation_lower_bound}[/dim]")
+    _emit(f"[dim]Observables: {observables}, gen_lower_bound={generation_lower_bound}[/dim]")
     n_variants = X_all.shape[0]
     Y_all, obs, Y_ts_all, Y_meta_all = collect_observables(
         history_base,
@@ -809,16 +885,16 @@ def _sample_local(
     if germ_test is not None:
         np.save(cache_path / "germ_test.npy", germ_test)
 
-    console.print(
+    _emit(
         f"[bold green]Cached {Y_agg.shape[0]} training samples[/bold green] "
         f"({Y_agg.shape[1]} outputs) to [cyan]{cache_path}[/cyan]"
     )
     if Y_test_arr is not None:
-        console.print(f"  [dim]Held-out validation: {Y_test_arr.shape[0]} samples[/dim]")
+        _emit(f"  [dim]Held-out validation: {Y_test_arr.shape[0]} samples[/dim]")
     if Y_ts:
-        console.print(f"  [dim]Timeseries: {len(Y_ts)} samples[/dim]")
+        _emit(f"  [dim]Timeseries: {len(Y_ts)} samples[/dim]")
     if Y_meta:
-        console.print("  [dim]Metadata: generation/seed labels (strategies 2-3 enabled)[/dim]")
+        _emit("  [dim]Metadata: generation/seed labels (strategies 2-3 enabled)[/dim]")
 
 
 def _sample_design_conditions(
@@ -840,6 +916,8 @@ def _sample_design_conditions(
     observables: list[str],
     generation_lower_bound: int,
     seed: int,
+    max_condition_parallel: int | None = None,
+    memory_per_workflow_gb: float = 3.0,
 ) -> None:
     """Design-config mode: M structural design conditions × N PCRV samples.
 
@@ -858,14 +936,11 @@ def _sample_design_conditions(
     ``quantify_multi_condition()``. Per-condition PCEs + cross-condition
     Sobol comparison fall out of existing machinery.
     """
-    import copy as _copy
     import json as _json
-    import pickle as _pickle
 
     from libuq.pipeline.param_loader import ParameterDataset
     from uq.convert_variants import _resolve_variant_entries
     from uq.vecoli_config import (
-        _apply_design_to_baseline,
         _design_condition_id,
         _design_layer_attr_paths,
     )
@@ -915,60 +990,63 @@ def _sample_design_conditions(
         if len(overlap) > 10:
             console.print(f"    [yellow]... and {len(overlap) - 10} more[/yellow]")
 
-    # ── Per-condition sub-runs ──
+    # ── Resolve per-condition worker args and concurrency cap ──
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    from uq._condition_worker import CondResult, run_one_condition
+    from uq.vecoli_config import _safe_condition_concurrency
+
+    n_concurrent = _safe_condition_concurrency(
+        n_conditions=M,
+        max_user=max_condition_parallel,
+        memory_per_workflow_gb=memory_per_workflow_gb,
+    )
+    console.print(
+        f"  [dim]Concurrency: {n_concurrent} condition workflow(s) at a time "
+        f"(of {M} total). Within each, Nextflow handles "
+        f"variants × seeds × generations parallelism.[/dim]"
+    )
+
+    # Serialize the SimDataParameter specs once (workers can't pickle the
+    # full param_space object directly — its sim_data attr is non-picklable).
+    param_specs_serialized = [
+        p.model_dump() for p in param_space._sim_data_parameters
+    ]
+
     condition_ids: list[str] = []
+    worker_args: list[dict[str, Any]] = []
     for j, design_params in enumerate(design_entries):
         cond_id = _design_condition_id(design_module_name, j, design_params)
-        # quantify_multi_condition expects `cache_dir / f"condition_{cond_id}"`
-        # (existing contract from --conditions mode).
         cond_dir = cache_path / f"condition_{cond_id}"
         cond_dir.mkdir(parents=True, exist_ok=True)
         condition_ids.append(cond_id)
+        worker_args.append({
+            "j": j,
+            "condition_id": cond_id,
+            "cond_dir_str": str(cond_dir),
+            "sim_data_path": sim_data_path,
+            "design_module_name": design_module_name,
+            "design_params": design_params,
+            "X_train": X_train,
+            "X_test": X_test,
+            "germ_train": germ_train,
+            "germ_test": germ_test,
+            "param_specs": param_specs_serialized,
+            "bounds": bounds,
+            "n_samples": n_samples,
+            "n_test": n_test,
+            "n_init_sims": n_init_sims,
+            "generations": generations,
+            "max_duration": max_duration,
+            "observables": observables,
+            "generation_lower_bound": generation_lower_bound,
+            "seed": seed,
+        })
 
-        console.print(
-            f"\n[bold cyan]── Condition {j + 1}/{M}: {cond_id} ──[/bold cyan]"
-        )
-        console.print(f"  [dim]design_params: {design_params}[/dim]")
-
-        # Pre-bake the design layer into a fresh sim_data copy and persist
-        # it under the condition directory.  vEcoli's workflow.py picks up
-        # this pickle via sim_data_path and skips Parca (the editable
-        # sim_data is what apply_variant produced).
-        designed = _apply_design_to_baseline(
-            _copy.deepcopy(baseline_sim_data),
-            design_module_name,
-            design_params,
-        )
-        designed_pickle = cond_dir / "sim_data.cPickle"
-        with designed_pickle.open("wb") as f:
-            _pickle.dump(designed, f)
-        console.print(f"  [dim]Wrote pre-baked sim_data: {designed_pickle.name}[/dim]")
-
-        # Run the standard local UQ workflow against the pre-baked pickle.
-        # Same X across all conditions (paired comparison).
-        _sample_local(
-            sim_data_path=str(designed_pickle),
-            cache_path=cond_dir,
-            X_all=np.vstack([X_train, X_test]) if X_test is not None else X_train,
-            param_space=param_space,
-            n_samples=n_samples,
-            n_test=n_test,
-            n_init_sims=n_init_sims,
-            generations=generations,
-            max_duration=max_duration,
-            observables=observables,
-            generation_lower_bound=generation_lower_bound,
-            base_config=None,
-            conditions=[],
-            X_train=X_train,
-            X_test=X_test,
-            germ_train=germ_train,
-            germ_test=germ_test,
-            bounds=bounds,
-            seed=seed,
-        )
-
-    # ── conditions.json → enables uq quantify auto-detection ──
+    # Write conditions.json upfront so a failed mid-run still leaves a
+    # discoverable cache layout.  Quantify checks per-condition _DONE
+    # markers anyway via is_multi_condition_cache + the per-condition
+    # cache subdir's presence.
     cond_meta = {
         "conditions": condition_ids,
         "n_samples": n_samples,
@@ -978,14 +1056,118 @@ def _sample_design_conditions(
         "design_params_per_condition": {
             cid: dp for cid, dp in zip(condition_ids, design_entries)
         },
+        "concurrent_workers": n_concurrent,
     }
-    (cache_path / "conditions.json").write_text(_json.dumps(cond_meta, indent=2, default=str))
+    (cache_path / "conditions.json").write_text(
+        _json.dumps(cond_meta, indent=2, default=str)
+    )
+
+    # ── Dispatch ──
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+    results_by_j: dict[int, CondResult] = {}
+    if n_concurrent <= 1:
+        # Serial path — simpler, avoids ProcessPool spawn overhead, easier
+        # to debug. Same worker function, called inline.
+        with Progress(
+            SpinnerColumn("dots", style="bold magenta"),
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(bar_width=30, complete_style="green"),
+            TextColumn("[bold green]{task.percentage:>5.1f}%"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"Conditions 0/{M}", total=M)
+            for j, args in enumerate(worker_args):
+                console.print(
+                    f"  [dim]→ condition {j + 1}/{M}: {args['condition_id']}[/dim]"
+                )
+                results_by_j[j] = run_one_condition(args)
+                progress.update(
+                    task, completed=j + 1,
+                    description=f"Conditions {j + 1}/{M}",
+                )
+    else:
+        # Concurrent path — ProcessPoolExecutor with progress on completion.
+        with Progress(
+            SpinnerColumn("dots", style="bold magenta"),
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(bar_width=30, complete_style="green"),
+            TextColumn("[bold green]{task.percentage:>5.1f}%"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(
+                f"Conditions 0/{M}  (×{n_concurrent} concurrent)", total=M,
+            )
+            with ProcessPoolExecutor(max_workers=n_concurrent) as pool:
+                futures = {
+                    pool.submit(run_one_condition, args): args["j"]
+                    for args in worker_args
+                }
+                done = 0
+                for fut in as_completed(futures):
+                    j = futures[fut]
+                    try:
+                        result = fut.result()
+                    except Exception as exc:
+                        # Worker itself crashed before returning CondResult —
+                        # synthesize a failed result so the batch keeps going.
+                        result = CondResult(
+                            j=j,
+                            condition_id=condition_ids[j],
+                            status="failed",
+                            n_samples_cached=0,
+                            wall_clock_seconds=0.0,
+                            log_tail="",
+                            error=f"worker raised before returning: {exc!r}",
+                        )
+                    results_by_j[j] = result
+                    done += 1
+                    status_color = "green" if result.status == "ok" else "red"
+                    console.print(
+                        f"  [{status_color}]✓ {result.condition_id}: "
+                        f"{result.status} ({result.wall_clock_seconds:.0f}s, "
+                        f"{result.n_samples_cached} samples)[/{status_color}]"
+                    )
+                    progress.update(
+                        task, completed=done,
+                        description=f"Conditions {done}/{M}  (×{n_concurrent} concurrent)",
+                    )
+
+    # ── Summary ──
+    n_ok = sum(1 for r in results_by_j.values() if r.status == "ok")
+    n_failed = sum(1 for r in results_by_j.values() if r.status == "failed")
+    total_seconds = sum(r.wall_clock_seconds for r in results_by_j.values())
+
+    if n_failed == 0:
+        console.print(
+            f"\n[bold green]All {M} conditions succeeded.[/bold green]   "
+            f"[dim]Aggregate worker time: {total_seconds:.0f}s "
+            f"(wall-clock ~ {total_seconds / max(1, n_concurrent):.0f}s "
+            f"with {n_concurrent} concurrent)[/dim]"
+        )
+    else:
+        console.print(
+            f"\n[bold yellow]{n_ok}/{M} conditions succeeded, "
+            f"{n_failed} failed.[/bold yellow]"
+        )
+        console.print(
+            "  [dim]Failed conditions have `_FAILED` markers under their "
+            "cache dirs with the traceback. Inspect `_log.txt` for the "
+            "subprocess output. Resume support (--resume) is §25-F's "
+            "Phase 1B follow-up.[/dim]"
+        )
+        for r in results_by_j.values():
+            if r.status == "failed":
+                console.print(f"  [red]✗ {r.condition_id}[/red]")
+                if r.error:
+                    last_line = r.error.strip().splitlines()[-1] if r.error.strip() else ""
+                    console.print(f"      [dim]{last_line}[/dim]")
 
     console.print(
-        f"\n[bold green]Sampled {M} design conditions × {n_samples} UQ samples each "
-        f"= {M * n_samples} total variants.[/bold green]"
+        f"  [dim]conditions.json: {cache_path / 'conditions.json'}[/dim]"
     )
-    console.print(f"  [dim]conditions.json written: {cache_path / 'conditions.json'}[/dim]")
     console.print(
         "  [dim]Run `uq quantify` on this cache_dir — multi-condition GSA "
         "auto-detects via conditions.json.[/dim]"
@@ -1619,6 +1801,213 @@ def _print_multi_condition_report(mc_result: Any) -> None:
             box=box.ROUNDED,
             padding=(1, 2),
         )
+    )
+
+
+# ── uq create mutations ─────────────────────────────────────────────
+
+
+@create_app.command(name="mutations")
+def create_mutations(
+    sim_data_path: str = typer.Argument(..., help="Path to baseline simData.cPickle"),
+    output: str = typer.Option(
+        ...,
+        "--output", "-o",
+        help="Where to write the resulting --params-file JSON.",
+    ),
+    n_samples: int = typer.Option(
+        20,
+        "--n-samples",
+        help="Hint forwarded to dynamic perturbation schemes that scale "
+        "bounds with sample count. Does not affect the static-PARAMETERS "
+        "path. Default 20.",
+    ),
+    design_config: str | None = typer.Option(
+        None,
+        "--design-config",
+        help="Optional vEcoli config JSON with a structural-design variants "
+        "block. When set, the generated params file is checked against the "
+        "design layer's mutation attr_paths and a warning is emitted on any "
+        "overlap (UQ-sampled values would silently overwrite the design's "
+        "values at those paths under `uq sample --design-config`).",
+    ),
+    perturbation_scheme: str | None = typer.Option(
+        None,
+        "--perturbation-scheme",
+        help="Path to a .py file OR a dotted module name "
+        "(`my_pkg.schemes.foo`) exposing one of:  "
+        "(a) `build_parameters(sim_data, n_samples=0, seed=42) -> "
+        "list[SimDataParameter]`, or  (b) `PARAMETERS: list[SimDataParameter]`. "
+        "When omitted, `DEFAULT_SIM_DATA_PARAMETERS` is used (6 vEcoli "
+        "physiological knobs with bounds from Ahn-Horst et al. 2022 and "
+        "standard E. coli biology). NOTE: this default is *domain-pragmatic*, "
+        "not *methodology-canonical* — PyTUQ and forward-UQ literature "
+        "(Sudret, Saltelli, Iooss) constrain only the form of the prior "
+        "(uniform on a bounded interval under Legendre/LU basis) and are "
+        "silent on bounds selection. For a methodology-agnostic alternative "
+        "(±30% around baseline) see "
+        "`examples/perturbation_schemes/pct_around_baseline.py`.",
+    ),
+    seed: int = typer.Option(
+        42,
+        "--seed",
+        help="Random seed forwarded to dynamic perturbation schemes that "
+        "accept the kwarg.",
+    ),
+) -> None:
+    """Generate a `--params-file` JSON describing which sim_data attributes
+    UQ will perturb and within what bounds.
+
+    \b
+    Default usage (the canonical 6 physiological params):
+        uq create mutations sim_data/baseline/kb/simData.cPickle \\
+            --output examples/uq_artifacts/params/params_demo.json
+
+    \b
+    Custom perturbation scheme (Python file):
+        uq create mutations sim_data/baseline/kb/simData.cPickle \\
+            --output ./my_params.json \\
+            --perturbation-scheme examples/perturbation_schemes/literature_ranges.py
+
+    \b
+    With overlap-check vs a design config:
+        uq create mutations sim_data/baseline/kb/simData.cPickle \\
+            --output ./mec_params.json \\
+            --design-config examples/vecoli_configs/mec.json \\
+            --perturbation-scheme my_pkg.schemes.pct_around_baseline
+
+    \b
+    The output JSON is the same `--params-file` format consumed by
+    `uq sample`. Every spec is validated against the loaded sim_data —
+    bogus attr_paths fail fast here, not later in the workflow.
+    """
+    import json as _json
+
+    from libuq.pipeline.param_loader import ParameterDataset
+    from uq.perturbation import (
+        build_parameters_from_scheme,
+        load_perturbation_scheme,
+    )
+
+    sim_data_path = str(Path(sim_data_path).resolve())
+    out_path = Path(output).resolve()
+
+    console.print(
+        f"[bold cyan]create mutations:[/bold cyan] {Path(sim_data_path).name} → "
+        f"{out_path.name}"
+    )
+
+    # 1. Load baseline sim_data.
+    console.print("  [dim]Loading baseline sim_data...[/dim]")
+    ds = ParameterDataset(sim_data_path=sim_data_path)
+
+    # 2. Load perturbation scheme.
+    try:
+        scheme = load_perturbation_scheme(perturbation_scheme)
+    except ImportError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+
+    scheme_label = (
+        "DEFAULT_SIM_DATA_PARAMETERS" if scheme is None
+        else getattr(scheme, "__name__", "(custom)")
+    )
+    console.print(f"  [dim]Perturbation scheme: {scheme_label}[/dim]")
+
+    # 3. Build parameters.
+    try:
+        params = build_parameters_from_scheme(
+            scheme, ds.sim_data, n_samples=n_samples, seed=seed,
+        )
+    except (ValueError, TypeError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+
+    if not params:
+        console.print(
+            "[red]Perturbation scheme produced zero parameters. The resulting "
+            "params file would be empty.[/red]"
+        )
+        raise typer.Exit(1)
+
+    # 4. Validate every attr_path against sim_data (existing machinery).
+    try:
+        validated = ds._validate_sim_data_parameters(params)
+    except ValueError as exc:
+        console.print(f"[red]Validation failed:[/red] {exc}")
+        raise typer.Exit(1)
+
+    # 5. Overlap-check vs design config (optional, warning only — caller can
+    #    proceed with the params file and let `uq sample --design-config`
+    #    decide what to do).
+    if design_config is not None:
+        from uq.convert_variants import _resolve_variant_entries
+        from uq.vecoli_config import _design_layer_attr_paths
+
+        in_cfg = _json.loads(Path(design_config).read_text())
+        if "variants" not in in_cfg:
+            console.print(
+                f"  [yellow]--design-config {design_config}: no 'variants' "
+                "key — skipping overlap check.[/yellow]"
+            )
+        else:
+            design_block = in_cfg["variants"]
+            if isinstance(design_block, dict) and len(design_block) == 1:
+                design_module_name = next(iter(design_block.keys()))
+                design_entries = _resolve_variant_entries(
+                    design_block[design_module_name],
+                )
+                design_paths = _design_layer_attr_paths(
+                    ds.sim_data, design_module_name, design_entries,
+                )
+                uq_paths = {p.attr_path for p in validated}
+                overlap = design_paths & uq_paths
+                if overlap:
+                    console.print(
+                        f"  [yellow]Warning: {len(overlap)} attr_path(s) "
+                        "overlap between the design layer and your generated "
+                        "params file — UQ-sampled values would overwrite "
+                        "the design's values at those paths under "
+                        "`uq sample --design-config`:[/yellow]"
+                    )
+                    for p in sorted(overlap):
+                        console.print(f"    [yellow]• {p}[/yellow]")
+                else:
+                    console.print(
+                        f"  [dim]No overlap with design module "
+                        f"{design_module_name!r}.[/dim]"
+                    )
+
+    # 6. Write the params file.
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = [p.model_dump() for p in validated]
+    out_path.write_text(_json.dumps(payload, indent=2))
+
+    # 7. Brief summary table for sanity inspection.
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+        header_style="bold magenta",
+        title="GENERATED PARAMETERS",
+        title_style="bold magenta",
+    )
+    table.add_column("NAME", style="bold yellow", no_wrap=True)
+    table.add_column("attr_path", style="dim")
+    table.add_column("bounds", justify="right")
+    for p in validated:
+        bounds_str = f"[{p.bounds[0]:g}, {p.bounds[1]:g}]"
+        table.add_row(p.name, p.attr_path, bounds_str)
+    console.print(
+        Panel(table, border_style="magenta", box=box.ROUNDED, padding=(0, 1))
+    )
+
+    console.print(
+        f"  [bold green]Wrote {len(validated)} parameter spec(s):[/bold green] "
+        f"[cyan]{out_path}[/cyan]"
+    )
+    console.print(
+        "  [dim]Use with `uq sample <SIM_DATA> --params-file "
+        f"{out_path}`.[/dim]"
     )
 
 
@@ -2394,6 +2783,38 @@ def plan(
         "divided evenly across conditions and the PCE adequacy assessment "
         "applies per-condition. Default 1 (single condition).",
     ),
+    observables: list[str] = typer.Option(
+        ["mass"],
+        "--observables",
+        help="Observable presets (drives per-sim Parquet disk estimate). "
+        "Repeatable. Default ['mass']. Per-sim disk heuristics: mass~3 MB, "
+        "exchange_fluxes~15 MB, transcriptome/proteome~80 MB, fluxome~50 MB.",
+    ),
+    cache_dir: str | None = typer.Option(
+        None,
+        "--cache-dir",
+        help="Path the run will write to. Used to check available disk via "
+        "shutil.disk_usage. None skips the disk-availability check.",
+    ),
+    max_condition_parallel: int | None = typer.Option(
+        None,
+        "--max-condition-parallel",
+        help="Max conditions to run concurrently (drives RAM peak estimate). "
+        "When None, auto-sized via _safe_condition_concurrency.",
+    ),
+    memory_per_workflow_gb: float = typer.Option(
+        3.0,
+        "--memory-per-workflow-gb",
+        help="Estimated RAM per concurrent vEcoli workflow (GB). Default 3 GB. "
+        "Bump for transcriptome/proteome sweeps (typically 6-8 GB).",
+    ),
+    wall_clock_per_sim_seconds: float = typer.Option(
+        30.0,
+        "--wall-clock-per-sim-seconds",
+        help="Mean wall-clock per single vEcoli sim (seconds). Default 30s "
+        "is a rough M-series-laptop ballpark. Use a quick `uq sample` "
+        "test-run to calibrate for your host.",
+    ),
 ) -> None:
     """Recommend (n_samples, n_init_sims, generations) for a compute budget.
 
@@ -2489,6 +2910,85 @@ def plan(
         console.print(
             "  [red]Recommended config has only 1 replicate — noise floor "
             "(Gap 2) will not be estimable.[/red]"
+        )
+
+    # ── Resource estimate panel ──
+    from uq.vecoli_config import _estimate_resources, _safe_condition_concurrency
+    resolved_concurrency = _safe_condition_concurrency(
+        n_conditions=n_conditions, max_user=max_condition_parallel,
+        memory_per_workflow_gb=memory_per_workflow_gb,
+    )
+    est = _estimate_resources(
+        n_conditions=n_conditions,
+        n_samples=rec.n_samples,
+        n_init_sims=rec.n_init_sims,
+        generations=rec.generations,
+        observables=observables,
+        max_condition_parallel=resolved_concurrency,
+        memory_per_workflow_gb=memory_per_workflow_gb,
+        cache_dir=cache_dir,
+        wall_clock_per_sim_seconds=wall_clock_per_sim_seconds,
+    )
+
+    def _color_verdict(verdict: str) -> str:
+        return {
+            "fits": "[green]✓ fits[/green]",
+            "tight": "[yellow]⚠ tight[/yellow]",
+            "overflows": "[red]✗ overflows[/red]",
+            "unknown": "[dim]? unknown[/dim]",
+        }[verdict]
+
+    res_lines = []
+    avail_parts = []
+    if est.ram_available_gb is not None:
+        avail_parts.append(f"{est.ram_available_gb:.1f} GB RAM free")
+    if est.disk_available_gb is not None:
+        avail_parts.append(f"{est.disk_available_gb:.0f} GB disk free in {est.cache_dir_checked}")
+    if avail_parts:
+        res_lines.append(f"  [dim]Available:[/dim]    {'   ·   '.join(avail_parts)}")
+    res_lines.append(
+        f"  [dim]Total sims:[/dim]   {est.total_sims:,} "
+        f"({est.sims_per_condition:,}/condition × {n_conditions} conditions)"
+    )
+    res_lines.append(
+        f"  [dim]RAM peak:[/dim]     ~{est.ram_peak_gb:.1f} GB  "
+        f"({est.max_condition_parallel} workers × {est.memory_per_workflow_gb:.0f} GB + parent) "
+        f"{_color_verdict(est.ram_verdict)}"
+    )
+    res_lines.append(
+        f"  [dim]Disk total:[/dim]   ~{est.disk_total_gb:.1f} GB  "
+        f"({est.disk_per_condition_gb:.1f} GB/condition for {','.join(observables)} preset) "
+        f"{_color_verdict(est.disk_verdict)}"
+    )
+    res_lines.append(
+        f"  [dim]Wall-clock:[/dim]   ~{est.wall_clock_hours:.1f} hours  "
+        f"(@ {est.wall_clock_per_sim_seconds:.0f}s/sim, "
+        f"intra-workflow ×{est.intra_workflow_concurrency}, ±50%)"
+    )
+    res_lines.append(
+        "  [dim]Heuristics; per-sim Parquet varies by --observables. "
+        "Tune via --memory-per-workflow-gb, --wall-clock-per-sim-seconds.[/dim]"
+    )
+
+    console.print(
+        Panel(
+            "\n".join(res_lines),
+            title="[bold magenta]RESOURCE ESTIMATES[/bold magenta]",
+            border_style="magenta",
+            box=box.ROUNDED,
+            padding=(0, 1),
+        )
+    )
+
+    if est.ram_verdict == "overflows":
+        console.print(
+            "  [red]RAM peak exceeds available — lower --max-condition-parallel "
+            "or close other apps.[/red]"
+        )
+    if est.disk_verdict == "overflows":
+        console.print(
+            f"  [red]Disk total exceeds free space at {est.cache_dir_checked}. "
+            "Choose a different --cache-dir or free space.[/red]"
         )
 
 

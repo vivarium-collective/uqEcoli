@@ -407,6 +407,256 @@ def _design_matrix_conditioning(
     )
 
 
+# Per-sim Parquet size heuristics by observable preset (MB per sim).
+# Calibrated from typical mass / cd1-module dimensions and observed Parquet
+# sizes; actual usage varies with generation count, lineage tree depth,
+# and emitter compression. Use as rough budgeting guidance, not contracts.
+OBSERVABLE_DISK_MB_PER_SIM: dict[str, float] = {
+    "mass": 3.0,             # 5 scalars
+    "higher_order": 3.0,     # 6 derived metrics
+    "exchange_fluxes": 15.0,  # ~87 fluxes
+    "transcriptome": 80.0,    # ~4,345 cistrons
+    "proteome": 80.0,         # ~4,309 monomers
+    "fluxome": 50.0,          # ~2,820 reactions
+}
+_DEFAULT_PRESET_DISK_MB = 10.0  # fallback for unknown presets
+
+
+@dataclasses.dataclass(frozen=True)
+class ResourceEstimate:
+    """Pre-launch estimate of RAM, disk, and wall-clock for a UQ run.
+
+    All estimates are heuristic. RAM is computed deterministically from the
+    concurrency cap; disk is observable-preset-driven; wall-clock uses a
+    user-tunable per-sim seconds estimate divided by intra-workflow Nextflow
+    parallelism. ``ram_available_gb`` / ``disk_available_gb`` are filled in
+    when psutil / shutil can reach the host; ``None`` when they can't.
+    """
+
+    # Inputs that drove the estimate
+    n_conditions: int
+    n_samples: int
+    n_init_sims: int
+    generations: int
+    observables: list[str]
+    max_condition_parallel: int
+    memory_per_workflow_gb: float
+    wall_clock_per_sim_seconds: float
+    intra_workflow_concurrency: int
+
+    # Estimates
+    ram_peak_gb: float
+    disk_per_condition_gb: float
+    disk_total_gb: float
+    wall_clock_hours: float
+    total_sims: int
+    sims_per_condition: int
+
+    # Host availability
+    ram_available_gb: float | None = None
+    disk_available_gb: float | None = None
+    cache_dir_checked: str | None = None
+
+    @property
+    def ram_verdict(self) -> str:
+        """'fits' | 'tight' | 'overflows' | 'unknown'."""
+        if self.ram_available_gb is None:
+            return "unknown"
+        if self.ram_available_gb >= 1.5 * self.ram_peak_gb:
+            return "fits"
+        if self.ram_available_gb >= self.ram_peak_gb:
+            return "tight"
+        return "overflows"
+
+    @property
+    def disk_verdict(self) -> str:
+        if self.disk_available_gb is None:
+            return "unknown"
+        if self.disk_available_gb >= 1.5 * self.disk_total_gb:
+            return "fits"
+        if self.disk_available_gb >= self.disk_total_gb:
+            return "tight"
+        return "overflows"
+
+
+def _estimate_resources(
+    n_conditions: int,
+    n_samples: int,
+    n_init_sims: int,
+    generations: int,
+    observables: list[str],
+    max_condition_parallel: int,
+    memory_per_workflow_gb: float = 3.0,
+    cache_dir: str | None = None,
+    wall_clock_per_sim_seconds: float = 30.0,
+    intra_workflow_concurrency: int = 2,
+    parent_ram_overhead_gb: float = 1.0,
+    sim_data_pickle_mb: float = 200.0,
+    nextflow_scratch_factor: float = 1.0,
+) -> ResourceEstimate:
+    """Compute a pre-launch resource estimate.
+
+    Args:
+        n_conditions: M (1 for single-condition runs; M from a design config).
+        n_samples: Per-condition PCRV sample count.
+        n_init_sims: Lineage seeds per variant.
+        generations: Generations per variant.
+        observables: List of observable presets — drives the per-sim Parquet
+            disk estimate via ``OBSERVABLE_DISK_MB_PER_SIM``.
+        max_condition_parallel: Number of conditions running concurrently
+            (already resolved by ``_safe_condition_concurrency``).
+        memory_per_workflow_gb: RAM estimate per concurrent vEcoli workflow.
+        cache_dir: Path to inspect for available disk (uses ``shutil.disk_usage``).
+            ``None`` skips the disk-availability check.
+        wall_clock_per_sim_seconds: Mean wall-clock per single sim. Default 30s
+            is a rough M-series-laptop ballpark; bump for slower hosts.
+        intra_workflow_concurrency: Cores Nextflow uses per workflow.
+            Default 2 (matches vEcoli's `nextflow.config` default).
+        parent_ram_overhead_gb: Headroom for the parent Python process + OS.
+        sim_data_pickle_mb: Pre-baked sim_data.cPickle size per condition.
+        nextflow_scratch_factor: Multiplier on output-Parquet disk to account
+            for Nextflow's `nextflow_temp/` scratch (default 1.0 = scratch is
+            roughly equal to outputs during the run; cleaned at the end).
+    """
+    # Per-sim disk: sum of observable preset sizes
+    per_sim_mb = sum(
+        OBSERVABLE_DISK_MB_PER_SIM.get(p, _DEFAULT_PRESET_DISK_MB)
+        for p in observables
+    ) or _DEFAULT_PRESET_DISK_MB
+
+    # vEcoli runs (n_samples + 1) variants × seeds × generations per condition
+    # (+1 for the baseline vEcoli inserts). We use n_samples directly here
+    # rather than +1 because the baseline runs anyway in design-config and
+    # is shared across the sweep.
+    sims_per_condition = max(1, n_samples) * max(1, n_init_sims) * max(1, generations)
+    total_sims = max(1, n_conditions) * sims_per_condition
+
+    # Disk per condition: pre-baked pickle + Parquet outputs + scratch
+    parquet_per_cond_mb = sims_per_condition * per_sim_mb
+    disk_per_cond_mb = (
+        sim_data_pickle_mb
+        + parquet_per_cond_mb
+        + parquet_per_cond_mb * nextflow_scratch_factor
+    )
+    disk_per_cond_gb = disk_per_cond_mb / 1024.0
+    disk_total_gb = disk_per_cond_gb * max(1, n_conditions)
+
+    # RAM peak: max_concurrent workflows × per-workflow RAM + parent overhead
+    ram_peak_gb = (
+        max(1, max_condition_parallel) * memory_per_workflow_gb
+        + parent_ram_overhead_gb
+    )
+
+    # Wall-clock: serialize across condition batches, parallelize within
+    intra_parallel = max(1, intra_workflow_concurrency)
+    wall_per_cond_seconds = sims_per_condition * wall_clock_per_sim_seconds / intra_parallel
+    import math
+    n_batches = math.ceil(n_conditions / max(1, max_condition_parallel))
+    wall_clock_hours = (n_batches * wall_per_cond_seconds) / 3600.0
+
+    # Host availability
+    ram_available_gb: float | None = None
+    try:
+        import psutil
+        ram_available_gb = psutil.virtual_memory().available / (1024 ** 3)
+    except ImportError:
+        pass
+
+    disk_available_gb: float | None = None
+    cache_dir_checked: str | None = None
+    if cache_dir is not None:
+        import shutil as _shutil
+        from pathlib import Path as _Path
+        # Walk up to the nearest existing parent so disk_usage doesn't fail
+        # on a not-yet-created cache directory.
+        p = _Path(cache_dir).resolve()
+        while not p.exists() and p != p.parent:
+            p = p.parent
+        if p.exists():
+            usage = _shutil.disk_usage(str(p))
+            disk_available_gb = usage.free / (1024 ** 3)
+            cache_dir_checked = str(p)
+
+    return ResourceEstimate(
+        n_conditions=n_conditions,
+        n_samples=n_samples,
+        n_init_sims=n_init_sims,
+        generations=generations,
+        observables=list(observables),
+        max_condition_parallel=max_condition_parallel,
+        memory_per_workflow_gb=memory_per_workflow_gb,
+        wall_clock_per_sim_seconds=wall_clock_per_sim_seconds,
+        intra_workflow_concurrency=intra_workflow_concurrency,
+        ram_peak_gb=ram_peak_gb,
+        disk_per_condition_gb=disk_per_cond_gb,
+        disk_total_gb=disk_total_gb,
+        wall_clock_hours=wall_clock_hours,
+        total_sims=total_sims,
+        sims_per_condition=sims_per_condition,
+        ram_available_gb=ram_available_gb,
+        disk_available_gb=disk_available_gb,
+        cache_dir_checked=cache_dir_checked,
+    )
+
+
+def _safe_condition_concurrency(
+    n_conditions: int,
+    max_user: int | None = None,
+    memory_per_workflow_gb: float = 3.0,
+    cpus_per_workflow: int = 2,
+    hard_ceiling: int = 4,
+) -> int:
+    """How many condition workflows can safely run concurrently.
+
+    Takes the minimum of four constraints:
+
+    * **n_conditions** — never run more workers than there are conditions.
+    * **CPU**: ``cpu_count() // cpus_per_workflow``.  Each vEcoli workflow
+      saturates ``cpus_per_workflow`` cores through Nextflow's local
+      executor; oversubscribing thrashes.
+    * **RAM**: ``available_RAM_gb / memory_per_workflow_gb`` (via
+      ``psutil.virtual_memory().available`` when psutil is installed,
+      otherwise falls back to the CPU constraint).  Each workflow holds
+      a multi-hundred-MB sim_data plus per-sim agent state; running too
+      many in parallel OOMs the host.
+    * **hard_ceiling** — sanity cap (default 4) to keep wall-clock
+      behavior predictable on shared dev hosts.  Increase via ``max_user``
+      on dedicated workstations / clusters.
+    * **max_user** — explicit override from ``--max-condition-parallel``;
+      None means "no user override".
+
+    Returns at least 1 — even if RAM/CPU are tight, one condition runs
+    serially.
+
+    Args:
+        n_conditions: Number of conditions in the design sweep (``M``).
+        max_user: User override; ``None`` to defer to auto.
+        memory_per_workflow_gb: Estimated RAM per vEcoli workflow.
+            Default 3 GB (calibrated for the default `mass` observable
+            preset; bump for transcriptome / proteome sweeps).
+        cpus_per_workflow: Cores Nextflow's local executor uses per
+            workflow.  Default 2 (matches vEcoli's `nextflow.config`).
+        hard_ceiling: Absolute cap for safety.  Default 4.
+    """
+    import os
+
+    cpu_count = os.cpu_count() or 1
+    cpu_limit = max(1, cpu_count // max(1, cpus_per_workflow))
+
+    try:
+        import psutil
+        available_gb = psutil.virtual_memory().available / (1024 ** 3)
+        ram_limit = max(1, int(available_gb / max(0.1, memory_per_workflow_gb)))
+    except ImportError:
+        # No psutil — defer to the CPU constraint.
+        ram_limit = cpu_limit
+
+    candidates = [max(1, n_conditions), cpu_limit, ram_limit, max(1, hard_ceiling)]
+    if max_user is not None and max_user > 0:
+        candidates.append(max_user)
+    return max(1, min(candidates))
+
+
 def _design_condition_id(
     module_name: str,
     index: int,
