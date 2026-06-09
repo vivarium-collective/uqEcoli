@@ -148,6 +148,79 @@ Variant-config conversion and multi-condition design sweeps
   gains an ``n_conditions: int`` field; default of 1 preserves single-
   condition behavior exactly.
 
+Cross-condition parallelism + resource estimation + params-file generator
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **§25-F — concurrent design conditions** (Tier 1A from the parallelism
+  plan).  ``uq sample --design-config`` now dispatches the M conditions
+  through ``concurrent.futures.ProcessPoolExecutor`` instead of a serial
+  Python loop.  New ``uq/_condition_worker.py`` exposes a top-level
+  picklable ``run_one_condition(args)`` callable + ``CondResult`` dataclass
+  (status, n_samples_cached, wall_clock_seconds, log_tail, error).  Each
+  worker does deep-copy + ``apply_variant`` + pickle + ``_sample_local``
+  (quiet mode, per-condition ``experiment_id`` for an isolated
+  ``nextflow_temp/`` scratch directory).  ``_sample_local`` gains
+  ``experiment_id``, ``quiet``, ``log_path`` parameters so it can be driven
+  from a worker without interleaved Rich UI.  New ``--max-condition-parallel``
+  and ``--memory-per-workflow-gb`` CLI flags.  ``_safe_condition_concurrency``
+  in ``uq/vecoli_config.py`` takes ``min(M, CPU/cpus_per_workflow,
+  available_RAM/memory_per_workflow_gb, max_user, hard_ceiling=4)``.
+  Failure isolation: per-condition ``_FAILED`` markers, batch continues,
+  final summary panel.  ``_DONE`` markers written for future ``--resume``
+  support (Phase 1B).
+
+* **Resource estimation in ``uq plan``** — new ``ResourceEstimate`` dataclass
+  and ``_estimate_resources()`` helper.  ``uq plan`` now accepts
+  ``--observables``, ``--cache-dir``, ``--memory-per-workflow-gb``, and
+  ``--wall-clock-per-sim-seconds`` and prints a RESOURCE ESTIMATES panel
+  with peak RAM, total disk per preset, wall-clock hours, and host-aware
+  ``fits``/``tight``/``overflows``/``unknown`` verdicts via ``psutil``
+  and ``shutil.disk_usage``.  Observable-preset disk heuristics in
+  ``OBSERVABLE_DISK_MB_PER_SIM``.
+
+* **``uq create mutations``** — new ``create`` Typer subgroup with a
+  ``mutations`` subcommand that generates a ``--params-file`` JSON from a
+  baseline ``simData.cPickle``.  ``--perturbation-scheme PATH_OR_MODULE``
+  accepts a ``.py`` file or dotted module exposing either
+  ``PARAMETERS: list[SimDataParameter]`` (static) or
+  ``build_parameters(sim_data, n_samples=0, seed=42) -> list[...]``
+  (dynamic; ``inspect.signature``-filtered kwargs).  Overlap warning
+  against ``--design-config``'s mutation paths.  Bundled example scheme:
+  ``examples/perturbation_schemes/pct_around_baseline.py`` (±30% around
+  baseline).  Default scheme is ``DEFAULT_SIM_DATA_PARAMETERS`` (six
+  vEcoli physiological knobs); the help text and a new
+  "On default bounds — methodology silence" section in
+  ``docs/cli_reference.rst`` make explicit that this default is
+  *domain-pragmatic*, not *methodology-canonical* — PyTUQ and forward-UQ
+  literature constrain only the form of the prior (uniform on a bounded
+  interval) and are silent on bounds selection.
+
+Conceptual framing: two axes of variation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Three docs surfaces (``docs/cli_reference.rst``, ``docs/getting_started.rst``,
+``TUTORIAL.md``) now document the orthogonality of the UQ axis (continuous
+``P_uq`` declared via ``--params-file``) and the design axis (categorical
+``P_design`` declared via ``--design-config`` or ``--conditions``).
+Covers:
+
+* The :math:`M \times N` matrix shape when both axes are present
+* The :math:`P_{design} \cap P_{uq} = \varnothing` soundness requirement
+  (overlap → ``sim_data_setattr`` silently overwrites the design)
+* The collapse rule: when :math:`P_{design} = P_{uq}`, drop into a
+  one-layer mode (BYO or default) rather than pretending there are two
+  orthogonal axes
+* Mode-selection decision table (when to use ``--params-file`` vs
+  ``--design-config`` vs ``--conditions`` vs ``--variants-source
+  base-config``)
+* Subtle case: finely-spaced design parameters should usually be folded
+  into the UQ layer for cheaper, cleaner Sobol interpretation
+
+Mirrors the §25-D triage's "name what's methodology-derived vs
+domain-pragmatic" framing; the overlap warning we already ship in
+``_sample_design_conditions`` is the runtime enforcement of this
+conceptual rule.
+
 v2ecoli backend parity (deferred)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

@@ -174,6 +174,31 @@ uv run uq quantify /path/to/simData.cPickle
 # Auto-detects multi-condition cache → prints cross-condition comparison
 ```
 
+### Generating a `--params-file`  (`uq create mutations`)
+
+`uq sample` consumes a `--params-file` describing which `sim_data`
+attributes to perturb. To generate one from a baseline `simData.cPickle`:
+
+```bash
+uv run uq create mutations /path/to/simData.cPickle \
+    --output ./my_params.json
+```
+
+By default this writes the canonical `DEFAULT_SIM_DATA_PARAMETERS` (six
+vEcoli physiological knobs with literature-informed bounds). For custom
+schemes — `±X% around baseline`, hand-curated literature ranges, your
+own selection logic — pass `--perturbation-scheme <PATH|MODULE>` pointing
+at a Python file or dotted module that exposes either a static
+`PARAMETERS` list or a `build_parameters(sim_data, n_samples=0, seed=42)`
+function. See `docs/cli_reference.rst` for the full contract and bundled
+example schemes under `examples/perturbation_schemes/`.
+
+**Honest disclaimer**: the shipped default is *domain-pragmatic* (vEcoli
+physiology), not *methodology-canonical*. PyTUQ and forward-UQ literature
+constrain only the form of the prior (uniform on bounded interval) and
+are silent on bounds selection. The bundled
+`pct_around_baseline.py` scheme is the methodology-agnostic alternative.
+
 ### Sizing a run before you commit compute  (`uq plan`)
 
 Before launching a vEcoli batch, ask the framework whether your compute

@@ -129,6 +129,24 @@ The flag mapping is:
 
 Custom parameters: pass `--params-file params.json` (see `examples/uq_artifacts/params/params_demo.json`).
 
+**Generating a `--params-file` from scratch** (`uq create mutations`):
+
+```bash
+uv run uq create mutations /path/to/simData.cPickle \
+    --output ./my_params.json \
+    --perturbation-scheme examples/perturbation_schemes/pct_around_baseline.py
+```
+
+The `--perturbation-scheme` argument loads a Python file or dotted module
+that defines either a static `PARAMETERS: list[SimDataParameter]` or a
+dynamic `build_parameters(sim_data, n_samples=0, seed=42) -> list[SimDataParameter]`.
+When omitted, `DEFAULT_SIM_DATA_PARAMETERS` (the six canonical knobs above)
+is used. **Disclaimer**: that default is vEcoli-domain-pragmatic, not
+UQ-methodology-canonical — PyTUQ/Sudret/Saltelli prescribe only the form
+of the prior (uniform on a bounded interval) and are silent on bounds
+selection. See `docs/cli_reference.rst` § "On default bounds —
+methodology silence" for the full framing.
+
 **Observable presets** (`--observables`, composable):
 
 The `sample` command extracts outputs using presets that mirror the
@@ -536,6 +554,34 @@ fo_ci = np.percentile(main_samples, [2.5, 97.5], axis=0).T   # per-param CI
 ```
 
 ---
+
+### Two axes of variation: design conditions × UQ samples
+
+Before the strategies, a one-paragraph framing.  `sim_data` can be
+mutated along two mathematically distinct axes — and the pipeline has
+separate flags for each:
+
+| Axis | Type | How it's declared | What PCE does with it |
+|------|------|-------------------|----------------------|
+| **UQ** $P_{uq}$ | Continuous (continuous parameters with uniform priors on bounded intervals) | `--params-file` | Decomposes `Var[Y]` via Sudret Sobol |
+| **Design** $P_{design}$ | Categorical / structural (knockouts, environments, timeline events) | `--design-config` (variant-level) or `--conditions` (parca-level) | Per-condition PCE + cross-condition rank stability |
+
+When both axes are present, the framework runs an `M × N` grid
+(M conditions × N UQ samples per condition, same X reused across
+conditions for paired comparison).  **`P_design ⊥ P_uq` is a soundness
+requirement, not a stylistic choice** — overlapping attr_paths cause
+`sim_data_setattr` to silently overwrite the design's value, breaking
+the per-condition Sobol interpretation.  The CLI surfaces this overlap
+before any compute is committed.
+
+The collapse rule: if `P_uq = P_design` (you want to perturb the same
+attr_paths via both), there's only one axis structurally.  Drop into a
+single-layer mode — BYO (`--variants-source base-config`) for
+hand-picked values, default mode for PCRV-driven values.  Two-layer
+`--design-config` earns its complexity only when the design axis is
+genuinely irreducible to a continuous parameter.  Full decision table
++ subtle "finely-spaced design should be folded into UQ" guidance lives
+in `docs/cli_reference.rst` § "Two axes of variation".
 
 ### How the 4 RFC006 strategies work
 
