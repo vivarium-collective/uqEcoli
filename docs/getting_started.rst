@@ -45,6 +45,38 @@ The two-stage workflow
   surrogate relative errors, and export a dashboard-ready artifact
   directory.
 
+Two axes of variation — pick the right mode
+-------------------------------------------
+
+Before reaching for a CLI flag, decide which axis you're varying.
+``sim_data`` can be mutated along two mathematically distinct axes:
+
+* **UQ axis** :math:`P_{uq}` — *continuous* parameters with a known
+  prior (uniform on a bounded interval).  PCRV samples them; PCE
+  decomposes ``Var[Y]`` across them via Sobol.  Declared via
+  ``--params-file``.
+* **Design axis** :math:`P_{design}` — *categorical / structural*
+  perturbations (knockouts on/off, environment swaps, timeline events
+  at fixed boundaries).  No continuous interval; PCE cannot decompose
+  variance across this axis.  Handled via per-condition PCE +
+  cross-condition Sobol comparison.  Declared via ``--design-config``
+  (variant-level) or ``--conditions`` (parca-level).
+
+When both axes are present, the framework runs an :math:`M \times N`
+grid: M design conditions, each with N PCRV samples reused across
+conditions for paired comparison.  **The two parameter sets must be
+disjoint at the attr_path level** for PCE Sobol to be sound — if they
+overlap, ``sim_data_setattr`` silently overwrites the design's value
+and the per-condition Sobol indices answer the wrong question.  The CLI
+surfaces this overlap before any compute is committed.
+
+See :doc:`cli_reference` § "Two axes of variation: design conditions ×
+UQ samples" for the full decision table, the collapse rule (when
+:math:`P_{design} = P_{uq}`, use single-layer ``--variants-source
+base-config`` or default mode instead of two-layer ``--design-config``),
+and the subtle case where finely-spaced designs should be folded into
+the UQ layer for cheaper, cleaner Sobol.
+
 Stage 1 — sample
 ^^^^^^^^^^^^^^^^
 
