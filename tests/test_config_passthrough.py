@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from uq.tui import _build_config, _build_variants_from_samples
+from uq.vecoli_config import _build_config, _build_variants_from_samples
 
 
 class TestBuildConfigPassthrough:
