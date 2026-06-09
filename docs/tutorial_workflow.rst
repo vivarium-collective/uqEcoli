@@ -125,6 +125,37 @@ parameter).
 The time-averaged observable vector becomes one row of :math:`Y`; the
 raw timeseries is kept under ``timeseries/`` for strategies 2-4.
 
+**Bring-your-own-variants (``--variants-source base-config``)**
+
+The default contract — one PCRV sample row ↔ one ``sim_data_setattr``
+variant — can be inverted.  If you already have a vEcoli config JSON
+with a fully-spec'd ``variants`` block (e.g. a previously-curated sweep,
+a multi-condition design, a hand-picked kinetic-feature scan), pass it
+with ``--variants-source base-config --base-config <PATH>`` and:
+
+1. PCRV sampling is skipped entirely (no ``sampleGerm`` / ``evalPC``).
+2. ``uq.vecoli_config._x_from_variants()`` reverse-maps mutation values
+   into :math:`X` row-by-row, column-ordered by ``--params-file``'s
+   ``attr_path`` list.  The germ matrix :math:`\Xi` is then derived via
+   the affine inverse of step 1's map.
+3. :math:`N_{\text{samples}}` is **forced** to the length of the
+   variants list.  ``--n-test`` is ignored (no validation surface
+   without PCRV draws).
+
+Because :math:`N` is now constrained by the user's variants count
+rather than chosen for PCE basis-size needs, ``uq sample`` prints a
+**PCE adequacy diagnostic** (red/yellow/dim) based on
+:math:`N_{\text{samples}} / \binom{p+d}{d}` at the default
+``--polynomial-order 2`` quantify setting.  The advisory tells you
+exactly how many more variants to add, what order to drop to, or
+whether ``--regression bcs`` is the better fit.
+
+BYO mode is local-only: forbidden with ``--backend v2ecoli`` and with
+``--api-url`` (remote mutation pushdown is unfinished).  The variants
+block must use ``sim_data_setattr`` — other modules cannot be
+reverse-mapped to scalar :math:`X` values and the cache will be
+incompatible with ``uq quantify``.
+
 **v2ecoli backend (``--backend v2ecoli``)**
 
 An alternative in-process backend uses the ``v2ecoli`` process-bigraph

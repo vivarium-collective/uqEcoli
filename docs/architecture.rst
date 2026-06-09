@@ -92,17 +92,33 @@ for the ``uq report`` command.
 Key modules
 -----------
 
-=========================  ================================================
-Module                     Role
-=========================  ================================================
-``uq/workflow.py``         PyTUQ UQPC pipeline (sample + quantify)
-``uq/report.py``           Self-contained HTML report generator
-``uq/cli.py``              Typer CLI (all commands)
-``uq/growth.py``           Growth-stage theta binning
-``uq/observables.py``      Observable presets + collection
-``uq/remote.py``           SMS-API client for remote execution
-``uq/multi_condition.py``  Cross-condition GSA
-``uq/v2ecoli_bridge.py``   Observable path maps for v2ecoli backend
-``uq/generators/v2ecoli.py``  v2ecoli in-process simulation generator
-``uq/generators/vecoli.py``   vEcoli subprocess simulation generator (deprecated)
-=========================  ================================================
+=============================  ================================================
+Module                         Role
+=============================  ================================================
+``uq/workflow.py``             PyTUQ UQPC pipeline (sample + quantify)
+``uq/report.py``               Self-contained HTML report generator
+``uq/cli.py``                  Typer CLI (all commands; primary entry point)
+``uq/vecoli_config.py``        vEcoli workflow-config helpers + BYO-variants
+                               reverse-map + PCE adequacy diagnostic
+``uq/growth.py``               Growth-stage theta binning
+``uq/observables.py``          Observable presets + collection
+``uq/remote.py``               SMS-API client for remote execution
+``uq/multi_condition.py``      Cross-condition GSA
+``uq/v2ecoli_bridge.py``       Observable path maps for v2ecoli backend
+``uq/generators/v2ecoli.py``   v2ecoli in-process simulation generator
+``uq/generators/vecoli.py``    vEcoli subprocess simulation generator (deprecated)
+``uq/tui.py``                  Textual TUI client (consumer of vecoli_config)
+=============================  ================================================
+
+``uq/vecoli_config.py`` is the canonical home for the vEcoli workflow-config
+machinery — ``_build_config`` (with the BYO override guard),
+``_build_variants_from_samples``, ``_x_from_variants`` (the reverse-map for
+BYO mode), ``_pce_sample_adequacy``, ``_collect_variant_timeseries``, and
+``_get_vecoli_root``.  Dependency direction is strict::
+
+    cli.py        ─┐
+    tui.py        ─┼─→  vecoli_config.py
+    processes.py  ─┘
+
+No reverse imports — the TUI consumes the CLI's helpers, not the other way
+around.  Any new vEcoli-config code should land in ``vecoli_config.py``.

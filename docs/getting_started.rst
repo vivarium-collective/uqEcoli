@@ -108,6 +108,55 @@ What happens:
    schema, per-strategy Sobol ``.npy`` files, and the two PCE surrogates
    (population + growth-stratified).
 
+Bring your own variants
+-----------------------
+
+If you already have a vEcoli config JSON with a fully-spec'd ``variants``
+block — a previously-curated sweep, a multi-condition design, the output
+of an Atlantis run — you can hand it to ``uq sample`` directly and have
+UQ run *those* variants instead of generating new ones from a parameter
+file:
+
+.. code-block:: bash
+
+   uv run uq sample /path/to/simData.cPickle \
+       --variants-source base-config \
+       --base-config examples/vecoli_configs/mec.json \
+       --params-file examples/uq_artifacts/params/params_demo.json \
+       --cache-dir ./uq_cache_mec \
+       --generations 4 --n-init-sims 2
+
+Under ``--variants-source base-config``:
+
+1. ``_load_variants_from_base_config()`` reads the ``variants`` block
+   from the JSON.  Must be the ``sim_data_setattr`` module (other modules
+   carry no scalar mutation values to reverse-map).
+2. ``_x_from_variants()`` walks the mutation list and reconstructs the
+   ``X`` matrix column-ordered by ``--params-file``'s ``attr_path`` list.
+   Every mutation entry must contain every spec's ``attr_path`` —
+   missing-key and index mismatches raise clear errors.
+3. PCRV sampling is **skipped**; ``germ_train`` is computed via affine
+   inverse of the input PCRV map.  ``n_samples`` is forced to the
+   variants-list length.  ``--n-test`` is ignored (held-out validation
+   requires PCRV sampling).
+4. A **PCE adequacy diagnostic** prints — red if your variants count is
+   below the PCE basis size for the default order-2 quantify run, yellow
+   if marginal, dim if comfortable.  It tells you exactly how many more
+   variants to add, what ``--polynomial-order`` to drop to at quantify
+   time, or whether ``--regression bcs`` would handle the sparsity better.
+
+Constraints (BYO is local-mode only for now):
+
+* ``--backend vecoli`` only.  ``--backend v2ecoli`` and ``--api-url``
+  reject ``--variants-source base-config`` with a clear error message;
+  remote mutation pushdown is tracked as a follow-up.
+* The variants block must use ``sim_data_setattr``.  Other modules
+  (e.g. ``condition``, ``flux_kinetics``) skip the reverse-map and
+  can't drive a meaningful ``quantify`` run.
+
+Stage 2 (``uq quantify``) is identical to the default path — the cache
+format is unchanged.
+
 Remote execution via SMS-API
 ---------------------------
 

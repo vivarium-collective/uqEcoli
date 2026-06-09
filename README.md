@@ -96,6 +96,48 @@ uv run uq quantify /path/to/simData.cPickle \
    terminal report ranking Sobol indices per strategy.
 6. Exports a dashboard-ready artifact directory under `./uq_results/`.
 
+### Bring your own variants (BYO mode)
+
+If you already have a vEcoli config JSON with a fully-spec'd `variants`
+block — a multi-condition sweep, a hand-curated kinetic-feature scan, the
+output of a previous Atlantis/vEcoli design — you can run **exactly those
+variants** through the UQ pipeline instead of having UQ generate samples
+from a parameter file:
+
+```bash
+uv run uq sample /path/to/simData.cPickle \
+    --variants-source base-config \
+    --base-config examples/vecoli_configs/mec.json \
+    --params-file examples/uq_artifacts/params/params_demo.json \
+    --cache-dir ./uq_cache_mec \
+    --generations 4 --n-init-sims 2
+```
+
+Under `--variants-source base-config`:
+
+- vEcoli runs *exactly* the variants in `mec.json` (no PCRV sampling).
+- `n_samples` is forced to the length of the variants list.
+- The cache's `X` is reverse-mapped from the mutation values, column-ordered
+  by `--params-file`'s `attr_path` list — so `uq quantify` regresses `Y`
+  against the perturbations vEcoli actually applied.
+- A PCE-adequacy diagnostic prints in red/yellow/dim depending on whether
+  your variants count is enough to fit a stable order-2 PCE (basis size
+  `C(p+d, d)`). It tells you exactly how many more samples to add, or what
+  to drop `--polynomial-order` to at quantify time.
+
+Constraints (local mode only for now):
+
+- `--backend vecoli` only — `v2ecoli` and `--api-url` paths reject BYO mode
+  with a clear error (remote mutation pushdown is tracked separately).
+- The base-config `variants` block must use `sim_data_setattr`. Other
+  variant modules can't be reverse-mapped into `X` (no scalar values to
+  extract); use the default `--variants-source params-file` path for those.
+
+The override guard that makes this work is itself useful in default mode:
+if you pass `--base-config foo.json` whose top-level has its own `variants`
+key, that block is now preserved verbatim instead of being clobbered by the
+auto-generated `sim_data_setattr` block.
+
 ### Remote execution via SMS-API
 
 If you don't have a local vEcoli checkout, sampling can run against

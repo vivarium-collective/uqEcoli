@@ -3,6 +3,92 @@ Changelog
 
 All notable changes to the vEcoli UQ Framework.
 
+[Unreleased]
+------------
+
+BYO-variants escape hatch + ``uq/vecoli_config.py`` refactor (feature branch:
+``feat/v2ecoli-integration``).
+
+Added
+^^^^^
+
+**BYO variants — ``--variants-source base-config``** (``uq/cli.py``,
+``uq/vecoli_config.py``)
+
+* New ``--variants-source {params-file, base-config}`` flag on ``uq sample``.
+  Default ``params-file`` preserves the standard PCRV-driven workflow.
+* ``base-config`` mode skips PCRV sampling entirely and reverse-maps the
+  user's ``sim_data_setattr`` mutation list back into ``X`` so ``uq quantify``
+  regresses ``Y`` against the perturbations vEcoli actually applied.
+* ``_x_from_variants()`` — inverse of ``_build_variants_from_samples``;
+  errors clearly on non-``sim_data_setattr`` modules, missing ``attr_path``s,
+  and index mismatches.
+* ``_germ_from_physical()`` — affine inverse of the input PCRV map.
+* ``_load_variants_from_base_config()`` — extracts the ``variants`` block
+  from a vEcoli config JSON; fails fast if absent.
+* Constraints: local ``--backend vecoli`` only; ``--backend v2ecoli`` and
+  ``--api-url`` reject BYO mode with a clear error.  ``--n-test`` ignored
+  in BYO mode (no validation surface without PCRV draws).
+
+**PCE sample-size adequacy diagnostic** (``uq/vecoli_config.py``)
+
+* ``_pce_basis_size(order, n_params)`` — total-order basis count
+  :math:`\binom{p+d}{d}`, matches PyTUQ's ``get_mi`` row count.
+* ``_pce_sample_adequacy(n_samples, n_params, order=2)`` returns
+  ``"ok" | "marginal" | "underdetermined"`` plus an advisory string with
+  concrete recommendations (add samples, drop ``--polynomial-order``, or
+  switch to ``--regression bcs``).
+* Surfaced in red / yellow / dim in the ``uq sample`` output under BYO
+  mode, where ``n_samples`` is forced by the user's variants count and
+  the diagnostic catches under-determined PCE fits before quantify.
+
+**Override guard in ``_build_config``** (``uq/vecoli_config.py``)
+
+* If ``--base-config`` JSON already declares a top-level ``variants`` key,
+  it is preserved verbatim instead of being clobbered by the auto-generated
+  ``sim_data_setattr`` block.  Strictly additive — default ``--params-file``
+  behavior is unchanged when no user ``variants`` block is present.
+
+Changed
+^^^^^^^
+
+**Module relocation: ``uq/tui.py`` → ``uq/vecoli_config.py``**
+
+* The vEcoli workflow-config helpers (``_build_config``,
+  ``_build_variants_from_samples``, ``_collect_variant_timeseries``,
+  ``_count_completed_variants``, ``_get_vecoli_root``) moved out of
+  ``uq/tui.py`` into the new CLI-owned module ``uq/vecoli_config.py``.
+* Restores correct dependency direction: ``cli.py``, ``tui.py``,
+  ``processes.py``, and ``bigraph/processes.py`` all import from
+  ``vecoli_config``.  No reverse imports.
+* Importers updated; no re-export shim in ``tui.py``.  New code should
+  import from ``uq.vecoli_config`` directly.
+
+Tests
+^^^^^
+
+* ``tests/test_byo_variants.py`` — 16 tests covering: ``_build_config``
+  override guard (with and without user ``variants``, any variant module),
+  ``_x_from_variants`` round-trip for scalar and indexed mutations,
+  rejection of non-``sim_data_setattr`` modules and missing ``attr_path``s,
+  ``_germ_from_physical`` correctness, ``_load_variants_from_base_config``
+  error paths, ``_pce_basis_size`` formula, and adequacy thresholds across
+  ``underdetermined`` / ``marginal`` / ``ok`` bands at varying orders.
+
+Documentation
+^^^^^^^^^^^^^
+
+* ``README.md`` — BYO variants section under Getting Started.
+* ``docs/cli_reference.rst`` — ``--variants-source`` flag with the BYO
+  example and the PCE adequacy diagnostic output.
+* ``docs/architecture.rst`` — ``uq/vecoli_config.py`` added to the module
+  map with the new dependency-direction diagram.
+* ``docs/getting_started.rst`` — Bring-your-own-variants subsection.
+* ``docs/tutorial_workflow.rst`` — BYO sub-step under Step 3 with the
+  affine-inverse derivation.
+* ``SAMPLING.md`` — stale ``uq/tui.py`` references updated to
+  ``uq/vecoli_config.py``.
+
 [0.3.0] - 2026-05-19
 --------------------
 

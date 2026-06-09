@@ -157,6 +157,58 @@ Options:
     ``conditions.json`` and runs per-condition quantification plus
     cross-condition rank stability analysis.
 
+``--variants-source [params-file|base-config]``
+    Where vEcoli ``variants`` come from.  Default ``params-file``.
+
+    * ``params-file`` (default) — PCRV-sample from ``--params-file`` bounds,
+      encode each row as a ``sim_data_setattr`` mutation.  Standard UQ
+      workflow; ``n_variants == n_samples`` by construction.
+    * ``base-config`` — **Bring-your-own-variants**.  Trust the
+      ``variants`` block in ``--base-config`` verbatim, reverse-map the
+      mutation values back into ``X`` so ``quantify`` can regress against
+      the perturbations vEcoli actually applied.
+
+    Constraints under ``base-config`` mode (local-only for now):
+
+    * Requires ``--base-config`` pointing at a JSON whose top-level has a
+      ``variants`` key.  Must be the ``sim_data_setattr`` module (other
+      variant modules cannot be reverse-mapped to ``X``).
+    * Forbidden with ``--api-url`` (remote mutation pushdown is unfinished)
+      and ``--backend v2ecoli`` (different cache-bundle codepath).  Both
+      raise a clear error.
+    * ``--n-samples`` is **forced** to the length of the variants list.
+    * ``--n-test`` is **ignored** (held-out validation requires PCRV
+      sampling).
+    * A PCE adequacy diagnostic prints after sampling:
+
+      .. code-block:: text
+
+         PCE adequacy: n_samples=12 < basis_size=28 for PCE order=2,
+                       6 params. Least-squares is ill-posed. Need at
+                       least 28 samples; 56+ recommended. Either add
+                       variants, drop --polynomial-order to 1
+                       (basis_size=7), or use --regression bcs.
+
+      Status is one of ``underdetermined`` (ratio < 1, red),
+      ``marginal`` (1 <= ratio < 2, yellow), or ``ok`` (ratio >= 2, dim).
+
+    Example BYO run::
+
+        uv run uq sample simData.cPickle \
+            --variants-source base-config \
+            --base-config examples/vecoli_configs/mec.json \
+            --params-file examples/uq_artifacts/params/params_demo.json \
+            --cache-dir ./uq_cache_mec \
+            --generations 4 --n-init-sims 2
+
+    Override-guard behavior in default mode:  even without
+    ``--variants-source base-config``, if ``--base-config`` is supplied
+    and its JSON has a top-level ``variants`` key, that block is now
+    preserved instead of being clobbered by the auto-generated
+    ``sim_data_setattr`` block.  Note that this leaves ``X`` derived from
+    PCRV sampling — unrelated to the variants vEcoli runs — so the cache
+    will mis-align unless you also pass ``--variants-source base-config``.
+
 Remote execution flags
 ^^^^^^^^^^^^^^^^^^^^^^
 
