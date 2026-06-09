@@ -123,5 +123,78 @@ def test_higher_order_increases_basis_and_lowers_ratio() -> None:
     assert p3.adequacy_ratio < p2.adequacy_ratio
 
 
+# ── Multi-condition planning (--design-config support) ───────────────
+
+
+def test_recommend_divides_budget_across_conditions() -> None:
+    """Under n_conditions=M, per-condition n_samples = budget/(M × replicates × gens)."""
+    cands = _recommend_compute_allocation(
+        budget=12000, n_params=6, polynomial_order=2,
+        min_replicates=4, generations=4, n_conditions=12,
+    )
+    rec = cands[0]
+    # per-condition budget = 12000 / 12 = 1000; n_samples = 1000 // 16 = 62
+    assert rec.n_samples == 62
+    assert rec.n_conditions == 12
+    assert rec.total_runs == 12 * 62 * 4 * 4  # M × N × S × G
+
+
+def test_recommend_per_condition_status_at_marginal() -> None:
+    """Budget = 12 × 30 × 16 = 5,760 → per-condition n_samples=30 → ratio 1.07× → marginal."""
+    cands = _recommend_compute_allocation(
+        budget=5760, n_params=6, polynomial_order=2,
+        min_replicates=4, generations=4, n_conditions=12,
+    )
+    assert cands[0].n_samples == 30
+    assert cands[0].adequacy_status == "marginal"
+    assert 1.0 <= cands[0].adequacy_ratio < 2.0
+
+
+def test_recommend_single_condition_unchanged() -> None:
+    """n_conditions=1 should behave exactly like the original single-condition path."""
+    multi = _recommend_compute_allocation(
+        budget=1000, n_params=6, polynomial_order=2,
+        min_replicates=4, generations=4, n_conditions=1,
+    )
+    single = _recommend_compute_allocation(
+        budget=1000, n_params=6, polynomial_order=2,
+        min_replicates=4, generations=4,  # n_conditions default = 1
+    )
+    assert multi[0].n_samples == single[0].n_samples
+    assert multi[0].total_runs == single[0].total_runs
+
+
+def test_recommend_total_runs_includes_conditions_factor() -> None:
+    """total_runs accounts for n_conditions, n_samples, n_init_sims, generations."""
+    cands = _recommend_compute_allocation(
+        budget=12000, n_params=6, polynomial_order=2,
+        min_replicates=4, generations=4, n_conditions=12,
+    )
+    rec = cands[0]
+    assert rec.total_runs == rec.n_conditions * rec.n_samples * rec.n_init_sims * rec.generations
+
+
+def test_recommend_alternatives_also_apply_per_condition() -> None:
+    """halve generations + single replicate alternatives also respect n_conditions."""
+    cands = _recommend_compute_allocation(
+        budget=12000, n_params=6, polynomial_order=2,
+        min_replicates=4, generations=4, n_conditions=12,
+    )
+    rec = next(c for c in cands if c.label == "recommended")
+    halve = next(c for c in cands if c.label == "halve generations")
+    single = next(c for c in cands if c.label == "single replicate")
+
+    # halve generations: per-condition budget 1000 → 1000//(4×2) = 125 samples
+    assert halve.n_samples == 125
+    # single replicate: per-condition budget 1000 → 1000//4 = 250 samples
+    assert single.n_samples == 250
+    # Total runs all include the M factor
+    assert halve.total_runs == 12 * 125 * 4 * 2
+    assert single.total_runs == 12 * 250 * 1 * 4
+    # PCE quality moves the same direction as without n_conditions
+    assert halve.n_samples > rec.n_samples
+    assert single.n_samples > halve.n_samples
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
