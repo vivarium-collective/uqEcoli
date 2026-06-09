@@ -220,17 +220,24 @@ def _pce_sample_adequacy(
 @dataclasses.dataclass(frozen=True)
 class ComputeAllocation:
     """A candidate (n_samples, n_init_sims, generations) triple with its
-    PCE adequacy assessment at a given polynomial order and dimension."""
+    PCE adequacy assessment at a given polynomial order and dimension.
+
+    Under multi-condition planning (``n_conditions > 1``), ``n_samples`` is
+    the *per-condition* sample count and the adequacy assessment applies to
+    each condition's PCE fit individually. ``total_runs`` accounts for the
+    full ``n_conditions × n_samples × n_init_sims × generations`` cost.
+    """
 
     label: str  # e.g. "recommended", "halve generations", "single replicate"
-    n_samples: int
+    n_samples: int  # per condition under multi-condition mode
     n_init_sims: int
     generations: int
-    total_runs: int  # n_samples × n_init_sims × generations
+    total_runs: int  # n_conditions × n_samples × n_init_sims × generations
     basis_size: int
-    adequacy_ratio: float  # n_samples / basis_size
+    adequacy_ratio: float  # n_samples / basis_size (per condition)
     adequacy_status: PceAdequacy
     noise_estimable: bool  # n_init_sims >= 2
+    n_conditions: int = 1
 
 
 def _recommend_compute_allocation(
@@ -239,31 +246,40 @@ def _recommend_compute_allocation(
     polynomial_order: int = 2,
     min_replicates: int = 4,
     generations: int = 4,
+    n_conditions: int = 1,
 ) -> list[ComputeAllocation]:
     """Recommend (n_samples, n_init_sims, generations) splits for a budget.
 
-    Total vEcoli runs = n_samples × n_init_sims × generations. Holding
-    n_init_sims and generations fixed, n_samples scales the PCE adequacy
-    ratio; pushing n_init_sims to 1 doubles n_samples but kills noise-floor
-    estimability (Gap 2). The returned list contains the user-requested
-    setting plus alternatives showing the trade-off.
+    Total vEcoli runs = ``n_conditions × n_samples × n_init_sims × generations``.
+    Holding n_init_sims and generations fixed, n_samples scales the per-condition
+    PCE adequacy ratio; pushing n_init_sims to 1 doubles n_samples but kills
+    noise-floor estimability (Gap 2). Under multi-condition planning
+    (``n_conditions > 1``, e.g. for ``uq sample --design-config``), the budget is
+    divided evenly across conditions and the adequacy assessment applies per
+    condition's PCE fit. The returned list contains the user-requested setting
+    plus alternatives showing the trade-off.
 
     Args:
-        budget: Total vEcoli runs available (n_samples × n_init_sims × generations).
+        budget: Total vEcoli runs available across all conditions.
         n_params: PCE input dimension (d).
         polynomial_order: PCE order at quantify time.
         min_replicates: Minimum n_init_sims required to estimate the noise
             floor (Triage 5). Default 4.
         generations: Target generations per variant (cell-cycle coverage).
             Default 4.
+        n_conditions: Number of structural design conditions (``M`` from
+            ``--design-config`` or ``--conditions``). Default 1 (single
+            condition).
 
     Returns:
         A list of ``ComputeAllocation`` candidates, recommended first.
         The PyTUQ adequacy status (``ok`` / ``marginal`` / ``underdetermined``)
         on the recommended row tells the user whether their budget is
-        enough for a stable PCE fit at the requested order.
+        enough for a stable per-condition PCE fit at the requested order.
     """
     basis = _pce_basis_size(polynomial_order, n_params)
+    n_c = max(1, n_conditions)
+    per_cond_budget = max(1, budget // n_c)
 
     def _make(label: str, n_s: int, n_i: int, gens: int) -> ComputeAllocation:
         status, _ = _pce_sample_adequacy(n_s, n_params, polynomial_order)
@@ -272,30 +288,32 @@ def _recommend_compute_allocation(
             n_samples=n_s,
             n_init_sims=n_i,
             generations=gens,
-            total_runs=n_s * n_i * gens,
+            total_runs=n_c * n_s * n_i * gens,
             basis_size=basis,
             adequacy_ratio=(n_s / basis) if basis > 0 else 0.0,
             adequacy_status=status,
             noise_estimable=(n_i >= 2),
+            n_conditions=n_c,
         )
 
     candidates: list[ComputeAllocation] = []
 
-    # Recommended: user's requested settings, n_samples derived from budget.
-    n_s_rec = max(1, budget // max(1, min_replicates * generations))
+    # Recommended: user's requested settings, n_samples derived from
+    # per-condition budget.
+    n_s_rec = max(1, per_cond_budget // max(1, min_replicates * generations))
     candidates.append(_make("recommended", n_s_rec, min_replicates, generations))
 
     # Alternative 1: halve generations → 2× n_samples → better PCE adequacy
     # but less cell-cycle coverage. Only emit if gens > 1.
     if generations > 1:
         alt_g = generations // 2
-        n_s_alt = max(1, budget // max(1, min_replicates * alt_g))
+        n_s_alt = max(1, per_cond_budget // max(1, min_replicates * alt_g))
         candidates.append(_make("halve generations", n_s_alt, min_replicates, alt_g))
 
     # Alternative 2: single replicate → max n_samples but no noise floor.
     # Only emit if the recommended config wasn't already at min_replicates=1.
     if min_replicates > 1:
-        n_s_alt = max(1, budget // max(1, generations))
+        n_s_alt = max(1, per_cond_budget // max(1, generations))
         candidates.append(_make("single replicate", n_s_alt, 1, generations))
 
     return candidates
@@ -387,6 +405,80 @@ def _design_matrix_conditioning(
         "or (c) use --regression bcs (sparse fits tolerate worse "
         "conditioning).",
     )
+
+
+def _design_condition_id(
+    module_name: str,
+    index: int,
+    params: dict[str, Any],
+) -> str:
+    """Deterministic, human-readable ID for one design point.
+
+    Format: ``<module>_<idx>_<short_param_digest>`` so condition directories
+    sort naturally by index while still distinguishing same-index points
+    across reruns with different params.
+
+    Example: ``mecillinam_timeline_0003_a1b2c3`` for design entry 3.
+    """
+    import hashlib
+    digest = hashlib.sha1(
+        repr(sorted(params.items())).encode("utf-8")
+    ).hexdigest()[:6]
+    return f"{module_name}_{index:04d}_{digest}"
+
+
+def _apply_design_to_baseline(
+    sim_data: Any,
+    module_name: str,
+    params: dict[str, Any],
+    module_override: str | None = None,
+) -> Any:
+    """Apply one design-variant entry to a deepcopied baseline sim_data.
+
+    vEcoli's ``runscripts/create_variants.py`` rejects multi-module variants
+    blocks ("Only one variant name allowed"), so we cannot stack design +
+    sim_data_setattr in one workflow. Instead we pre-bake the design layer
+    out-of-band: this helper applies the design's ``apply_variant`` to a
+    deepcopied baseline, returning the modified ``sim_data`` ready to be
+    pickled and pointed at by a downstream UQ vEcoli run.
+
+    Caller is responsible for ``copy.deepcopy(sim_data)`` before calling if
+    they need the baseline preserved — this function mutates in place per
+    vEcoli's ``apply_variant`` contract.
+    """
+    from uq.convert_variants import _resolve_apply_variant
+    apply_variant = _resolve_apply_variant(module_name, module_override)
+    result = apply_variant(sim_data, params)
+    return result if result is not None else sim_data
+
+
+def _design_layer_attr_paths(
+    baseline: Any,
+    module_name: str,
+    design_entries: list[dict[str, Any]],
+    module_override: str | None = None,
+) -> set[str]:
+    """Set of dot-paths the design layer touches across all its entries.
+
+    Used by the overlap safety check in ``uq sample --design-config``:
+    warn (or refuse) when a user's ``--params-file`` lists attr_paths that
+    the design layer also writes — the UQ-sampled value would silently
+    overwrite the design's value.
+
+    Uses the same ``_walk_diff`` machinery as ``convert-variants``.
+    """
+    import copy as _copy
+    from uq.convert_variants import _walk_diff
+
+    paths: set[str] = set()
+    for entry in design_entries:
+        baseline_copy = _copy.deepcopy(baseline)
+        mutated = _apply_design_to_baseline(
+            _copy.deepcopy(baseline), module_name, entry, module_override,
+        )
+        for diff_entry in _walk_diff(baseline_copy, mutated, include_arrays=True):
+            paths.add(diff_entry.attr_path)
+    return paths
 
 
 def _check_oob_variants(

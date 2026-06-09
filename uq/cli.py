@@ -133,6 +133,18 @@ def sample(
         "reverse-map mutation values into X for `quantify` "
         "(local --backend vecoli only, requires sim_data_setattr module).",
     ),
+    design_config: str | None = typer.Option(
+        None,
+        "--design-config",
+        help="Path to a vEcoli config JSON whose `variants` block specifies "
+        "M structural design conditions (e.g. mecillinam_timeline with "
+        "M=12 entries). For each design point, the design's apply_variant "
+        "is pre-baked into a per-condition sim_data.cPickle; UQ runs the "
+        "same N PCRV samples (sim_data_setattr) against each. Total runs: "
+        "M × N × n_init_sims × generations. `uq quantify` auto-detects the "
+        "multi-condition cache and computes per-condition PCEs + "
+        "cross-condition Sobol comparison. Local --backend vecoli only.",
+    ),
 ) -> None:
     """UQPC Steps 1-3: sample via PCRV.sampleGerm(), run vEcoli.
 
@@ -182,6 +194,29 @@ def sample(
 
     is_remote = api_url is not None
     is_byo = variants_source == "base-config"
+    is_design = design_config is not None
+
+    if is_design and is_byo:
+        console.print(
+            "[red]--design-config and --variants-source base-config are mutually "
+            "exclusive — they answer different questions. Design-config treats "
+            "your config's variants block as M structural conditions and runs "
+            "PCRV within each. base-config bakes the config's variants verbatim "
+            "and reverse-maps for UQ. Pick one.[/red]"
+        )
+        raise typer.Exit(1)
+    if is_design and is_remote:
+        console.print(
+            "[red]--design-config is not supported with --api-url yet. Remote "
+            "mutation pushdown for design conditions is tracked separately.[/red]"
+        )
+        raise typer.Exit(1)
+    if is_design and backend == "v2ecoli":
+        console.print(
+            "[red]--design-config is not supported with --backend v2ecoli yet. "
+            "Use --backend vecoli.[/red]"
+        )
+        raise typer.Exit(1)
 
     if is_byo:
         # Local mode only for now — the BYO reverse-mapping path is unverified
@@ -341,6 +376,28 @@ def sample(
             bounds=bounds,
             seed=seed,
             conditions=conditions,
+        )
+        return
+
+    if is_design:
+        _sample_design_conditions(
+            sim_data_path=sim_data_path,
+            cache_path=cache_path,
+            design_config_path=design_config,  # type: ignore[arg-type]
+            X_train=X_train,
+            X_test=X_test,
+            germ_train=germ_train,
+            germ_test=germ_test,
+            param_space=param_space,
+            bounds=bounds,
+            n_samples=n_samples,
+            n_test=n_test,
+            n_init_sims=n_init_sims,
+            generations=generations,
+            max_duration=max_duration,
+            observables=observables,
+            generation_lower_bound=generation_lower_bound,
+            seed=seed,
         )
         return
 
@@ -762,6 +819,177 @@ def _sample_local(
         console.print(f"  [dim]Timeseries: {len(Y_ts)} samples[/dim]")
     if Y_meta:
         console.print("  [dim]Metadata: generation/seed labels (strategies 2-3 enabled)[/dim]")
+
+
+def _sample_design_conditions(
+    *,
+    sim_data_path: str,
+    cache_path: Path,
+    design_config_path: str,
+    X_train: np.ndarray,
+    X_test: np.ndarray | None,
+    germ_train: np.ndarray,
+    germ_test: np.ndarray | None,
+    param_space: Any,
+    bounds: np.ndarray,
+    n_samples: int,
+    n_test: int,
+    n_init_sims: int,
+    generations: int,
+    max_duration: float,
+    observables: list[str],
+    generation_lower_bound: int,
+    seed: int,
+) -> None:
+    """Design-config mode: M structural design conditions × N PCRV samples.
+
+    vEcoli's ``create_variants.py`` rejects multi-module variants blocks
+    ("Only one variant name allowed"), so we cannot stack the design's
+    variant with ``sim_data_setattr`` in one workflow. Instead we pre-bake
+    the design layer out-of-band: for each design point j, deep-copy
+    baseline ``sim_data``, apply ``design_module.apply_variant`` to it,
+    pickle the result under ``cache_dir/condition_j/``, then run the
+    standard local UQ workflow with ``sim_data_setattr`` pointing at that
+    pre-baked pickle.
+
+    Result: ``cache_dir/condition_j/`` for each j, plus a top-level
+    ``conditions.json`` so ``uq quantify`` auto-detects multi-condition
+    via ``is_multi_condition_cache()`` and routes to
+    ``quantify_multi_condition()``. Per-condition PCEs + cross-condition
+    Sobol comparison fall out of existing machinery.
+    """
+    import copy as _copy
+    import json as _json
+    import pickle as _pickle
+
+    from libuq.pipeline.param_loader import ParameterDataset
+    from uq.convert_variants import _resolve_variant_entries
+    from uq.vecoli_config import (
+        _apply_design_to_baseline,
+        _design_condition_id,
+        _design_layer_attr_paths,
+    )
+
+    in_cfg = _json.loads(Path(design_config_path).read_text())
+    if "variants" not in in_cfg:
+        console.print(f"[red]--design-config {design_config_path}: no 'variants' key.[/red]")
+        raise typer.Exit(1)
+    design_block = in_cfg["variants"]
+    if not isinstance(design_block, dict) or len(design_block) != 1:
+        console.print(
+            "[red]--design-config requires exactly one variant module under "
+            f"'variants' (vEcoli's create_variants.py refuses multi-module "
+            f"blocks). Got {list(design_block) if isinstance(design_block, dict) else design_block!r}.[/red]"
+        )
+        raise typer.Exit(1)
+
+    design_module_name = next(iter(design_block.keys()))
+    design_entries = _resolve_variant_entries(design_block[design_module_name])
+    M = len(design_entries)
+    console.print(
+        f"  [dim]Design module: {design_module_name}  "
+        f"({M} condition{'s' if M != 1 else ''})[/dim]"
+    )
+
+    # Load baseline once.
+    console.print("  [dim]Loading baseline sim_data...[/dim]")
+    ds = ParameterDataset(sim_data_path=sim_data_path)
+    baseline_sim_data = ds.sim_data
+
+    # ── Overlap safety check ──
+    # Per-design attr paths vs --params-file attr paths.  Per user direction
+    # the conversion is convert+warn; mirror that here — warn, don't refuse.
+    design_paths = _design_layer_attr_paths(
+        baseline_sim_data, design_module_name, design_entries,
+    )
+    uq_paths = {spec.attr_path for spec in param_space._sim_data_parameters}
+    overlap = design_paths & uq_paths
+    if overlap:
+        console.print(
+            f"  [yellow]Warning: {len(overlap)} attr_path(s) overlap between "
+            "the design layer and your --params-file — the UQ-sampled value "
+            "will overwrite the design's value at those paths:[/yellow]"
+        )
+        for p in sorted(overlap)[:10]:
+            console.print(f"    [yellow]• {p}[/yellow]")
+        if len(overlap) > 10:
+            console.print(f"    [yellow]... and {len(overlap) - 10} more[/yellow]")
+
+    # ── Per-condition sub-runs ──
+    condition_ids: list[str] = []
+    for j, design_params in enumerate(design_entries):
+        cond_id = _design_condition_id(design_module_name, j, design_params)
+        # quantify_multi_condition expects `cache_dir / f"condition_{cond_id}"`
+        # (existing contract from --conditions mode).
+        cond_dir = cache_path / f"condition_{cond_id}"
+        cond_dir.mkdir(parents=True, exist_ok=True)
+        condition_ids.append(cond_id)
+
+        console.print(
+            f"\n[bold cyan]── Condition {j + 1}/{M}: {cond_id} ──[/bold cyan]"
+        )
+        console.print(f"  [dim]design_params: {design_params}[/dim]")
+
+        # Pre-bake the design layer into a fresh sim_data copy and persist
+        # it under the condition directory.  vEcoli's workflow.py picks up
+        # this pickle via sim_data_path and skips Parca (the editable
+        # sim_data is what apply_variant produced).
+        designed = _apply_design_to_baseline(
+            _copy.deepcopy(baseline_sim_data),
+            design_module_name,
+            design_params,
+        )
+        designed_pickle = cond_dir / "sim_data.cPickle"
+        with designed_pickle.open("wb") as f:
+            _pickle.dump(designed, f)
+        console.print(f"  [dim]Wrote pre-baked sim_data: {designed_pickle.name}[/dim]")
+
+        # Run the standard local UQ workflow against the pre-baked pickle.
+        # Same X across all conditions (paired comparison).
+        _sample_local(
+            sim_data_path=str(designed_pickle),
+            cache_path=cond_dir,
+            X_all=np.vstack([X_train, X_test]) if X_test is not None else X_train,
+            param_space=param_space,
+            n_samples=n_samples,
+            n_test=n_test,
+            n_init_sims=n_init_sims,
+            generations=generations,
+            max_duration=max_duration,
+            observables=observables,
+            generation_lower_bound=generation_lower_bound,
+            base_config=None,
+            conditions=[],
+            X_train=X_train,
+            X_test=X_test,
+            germ_train=germ_train,
+            germ_test=germ_test,
+            bounds=bounds,
+            seed=seed,
+        )
+
+    # ── conditions.json → enables uq quantify auto-detection ──
+    cond_meta = {
+        "conditions": condition_ids,
+        "n_samples": n_samples,
+        "n_test": n_test,
+        "design_module": design_module_name,
+        "design_config_path": str(design_config_path),
+        "design_params_per_condition": {
+            cid: dp for cid, dp in zip(condition_ids, design_entries)
+        },
+    }
+    (cache_path / "conditions.json").write_text(_json.dumps(cond_meta, indent=2, default=str))
+
+    console.print(
+        f"\n[bold green]Sampled {M} design conditions × {n_samples} UQ samples each "
+        f"= {M * n_samples} total variants.[/bold green]"
+    )
+    console.print(f"  [dim]conditions.json written: {cache_path / 'conditions.json'}[/dim]")
+    console.print(
+        "  [dim]Run `uq quantify` on this cache_dir — multi-condition GSA "
+        "auto-detects via conditions.json.[/dim]"
+    )
 
 
 def _sample_v2ecoli(
@@ -1934,6 +2162,200 @@ def fetch(
         )
 
 
+@app.command(name="convert-variants")
+def convert_variants(
+    in_config: str = typer.Argument(..., help="vEcoli config JSON with the original variants block"),
+    sim_data_path: str = typer.Option(..., "--sim-data", help="Baseline simData.cPickle path"),
+    out_config: str = typer.Option(..., "--out-config", help="Path to write the converted config"),
+    max_mutations: int = typer.Option(
+        200,
+        "--max-mutations",
+        help="Per-variant cap on usable mutation count. Convert+warn mode (per "
+        "user spec): exceeding this emits a warning but keeps going. Switch to "
+        "refuse-mode in code if convert+warn proves unreliable.",
+    ),
+    include_arrays: bool = typer.Option(
+        False,
+        "--include-arrays",
+        help="Emit 1-D numeric array changes as per-index mutations. Off by "
+        "default — array-level perturbations cannot fully round-trip through "
+        "sim_data_setattr's one-indexed-entry-per-attr-path constraint.",
+    ),
+    variant_module: str | None = typer.Option(
+        None,
+        "--variant-module",
+        help="Override the canonical ecoli.variants.<name> module path. Use "
+        "for non-standard variant modules; canonical vEcoli pattern is the "
+        "default — preferred when in doubt.",
+    ),
+    emit_params_file: str | None = typer.Option(
+        None,
+        "--emit-params-file",
+        help="Path to write a --params-file JSON inferred from the union of "
+        "mutation paths, with bounds = (min, max) of mutation values. Pass "
+        "this to `uq sample --params-file <PATH>` afterwards.",
+    ),
+) -> None:
+    """Convert a vEcoli variants config to UQ-canonical sim_data_setattr.
+
+    \b
+    Observational converter — applies each variant entry against the
+    baseline simData, diffs the result, and emits the changes as a
+    sim_data_setattr mutation list that reproduces the same vEcoli
+    behavior. Module-agnostic; works for `condition`, `flux_kinetics`,
+    `new_gene_internal_shift`, custom modules, etc.
+
+    \b
+    Canonical UQ workflow afterwards:
+      uq convert-variants in.json --sim-data simData.cPickle \\
+          --out-config /tmp/converted.json \\
+          --emit-params-file /tmp/params.json
+      uq sample simData.cPickle \\
+          --variants-source base-config \\
+          --base-config /tmp/converted.json \\
+          --params-file /tmp/params.json \\
+          --cache-dir ./uq_cache
+      uq quantify simData.cPickle --cache-dir ./uq_cache
+
+    \b
+    Limitations:
+      - sim_data_setattr accepts one indexed mutation per attr_path key
+        (dict semantics) — array-level rewrites cannot fully round-trip.
+      - Categorical mutations (strings, booleans) round-trip the vEcoli
+        behavior but cannot drive a PCE — quantify will fail on the cache.
+      - parca_variants is rejected; use `uq sample --conditions ...` for
+        multi-condition GSA instead.
+    """
+    import json as _json
+
+    from libuq.pipeline.param_loader import ParameterDataset
+    from uq.convert_variants import convert_variants_config, write_params_file
+
+    in_path = Path(in_config).resolve()
+    out_path = Path(out_config).resolve()
+
+    console.print(f"[bold cyan]convert-variants:[/bold cyan] {in_path.name} → {out_path.name}")
+    console.print(f"  [dim]simData: {sim_data_path}[/dim]")
+
+    in_cfg = _json.loads(in_path.read_text())
+    console.print(f"  [dim]Loading baseline sim_data...[/dim]")
+    ds = ParameterDataset(sim_data_path=sim_data_path)
+
+    try:
+        result = convert_variants_config(
+            in_config=in_cfg,
+            sim_data=ds.sim_data,
+            max_mutations=max_mutations,
+            include_arrays=include_arrays,
+            variant_module_override=variant_module,
+        )
+    except (ValueError, ImportError, AttributeError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(_json.dumps(result.output_config, indent=2))
+
+    # Per-variant summary
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+        header_style="bold magenta",
+        title="CONVERSION SUMMARY",
+        title_style="bold magenta",
+    )
+    table.add_column("VARIANT", style="bold yellow", justify="right")
+    table.add_column("scalar", justify="right")
+    table.add_column("indexed", justify="right")
+    table.add_column("categorical", justify="right")
+    table.add_column("skipped", justify="right")
+    for i, v in enumerate(result.per_variant):
+        table.add_row(
+            str(i),
+            str(v.n_scalar),
+            str(v.n_indexed),
+            f"[yellow]{v.n_categorical}[/yellow]" if v.n_categorical else "0",
+            f"[yellow]{v.n_complex_skipped}[/yellow]" if v.n_complex_skipped else "0",
+        )
+    console.print(Panel(table, border_style="magenta", box=box.ROUNDED, padding=(0, 1)))
+
+    console.print(f"  [dim]Converted {result.n_variants} variants, inferred dimension d = {result.dimension}[/dim]")
+
+    # When d=0 the variant is structurally non-PCE-tractable. Emit one
+    # clear diagnostic up front instead of the firehose of per-path
+    # complex_skipped warnings, which only tell the user what they already
+    # know (the converter couldn't find anything to UQ).
+    if result.dimension == 0 and result.n_variants > 0:
+        console.print(
+            Panel(
+                "[bold]Inferred dimension d = 0 — no UQ-usable mutations found.[/bold]\n\n"
+                "[dim]This variant module appears to perturb structural objects "
+                "(timelines, recipe dicts, DataFrames, gene-knockout lists) rather "
+                "than scalar or indexed-array attributes. PCE forward UQ requires a "
+                "vector x ∈ R^d encoded as scalar sim_data mutations.\n\n"
+                "Next steps:[/dim]\n"
+                "  [dim]1.[/dim] Inspect the variant's [bold]apply_variant[/bold] body. "
+                "If a scalar parameter (e.g. a concentration) is the real driver, "
+                "write a thin [bold]sim_data_setattr[/bold] wrapper that sets that "
+                "scalar directly on sim_data, then run UQ against the wrapper.\n"
+                "  [dim]2.[/dim] For multi-condition / categorical sweeps, use "
+                "[bold]`uq sample --conditions <c1> --conditions <c2>`[/bold] "
+                "(cross-condition GSA) instead of PCE.\n"
+                "  [dim]3.[/dim] See SAMPLING.md REMAINING GAPS for residual UQ scope "
+                "limits — this case lands in \"correlated / structural inputs\" "
+                "(out of scope for scalar PCE).",
+                title="[bold red] CONVERTER VERDICT [/bold red]",
+                border_style="red",
+                box=box.ROUNDED,
+                padding=(0, 1),
+            )
+        )
+    elif result.dimension > 30:
+        console.print(
+            f"  [yellow]Warning: d = {result.dimension} → PCE basis size grows "
+            "combinatorially. Run `uq plan --params {} --polynomial-order 2 "
+            "--budget <N>` to size a feasible run.[/yellow]".format(result.dimension)
+        )
+
+    # Warning printout: when d=0 the full list is just noise (one per
+    # complex_skipped path × n_variants). Show a tight summary in that case.
+    if result.warnings:
+        if result.dimension == 0:
+            # Dedupe by message content — what the user wants is "what *kinds*
+            # of structural mutations were seen", not the exact list.
+            from collections import Counter
+            # Strip leading "[module entry N] " prefix to get the body
+            bodies = []
+            for w in result.warnings:
+                body = w.split("] ", 1)[-1] if w.startswith("[") else w
+                # Collapse "at <path>:" detail to just the path-shape
+                if " at " in body:
+                    head, rest = body.split(" at ", 1)
+                    tail_word = rest.split(":", 1)[0].split(".")[-1]
+                    body = f"{head} ending in '{tail_word}'"
+                bodies.append(body)
+            counts = Counter(bodies)
+            console.print(f"  [yellow]{len(result.warnings)} warning(s) ({len(counts)} distinct shapes):[/yellow]")
+            for body, n in counts.most_common(8):
+                console.print(f"    [yellow]• [{n}×] {body}[/yellow]")
+            if len(counts) > 8:
+                console.print(f"    [yellow]... and {len(counts) - 8} more distinct shapes[/yellow]")
+        else:
+            console.print(f"  [yellow]{len(result.warnings)} warning(s):[/yellow]")
+            for w in result.warnings[:20]:
+                console.print(f"    [yellow]• {w}[/yellow]")
+            if len(result.warnings) > 20:
+                console.print(f"    [yellow]... and {len(result.warnings) - 20} more[/yellow]")
+
+    if emit_params_file:
+        params_path = Path(emit_params_file).resolve()
+        params_path.parent.mkdir(parents=True, exist_ok=True)
+        write_params_file(result.inferred_params, params_path)
+        console.print(f"  [green]Wrote --params-file: {params_path}[/green]")
+
+    console.print(f"  [bold green]Wrote converted config: {out_path}[/bold green]")
+
+
 @app.command(name="plan")
 def plan(
     budget: int = typer.Option(
@@ -1962,6 +2384,16 @@ def plan(
         "--generations",
         help="Generations per variant for cell-cycle coverage. Default 4.",
     ),
+    n_conditions: int = typer.Option(
+        1,
+        "--n-conditions",
+        help="Number of structural design conditions (M). For `uq sample "
+        "--design-config <mec.json>`, this is the number of design entries "
+        "produced by the variants block. For `--conditions <c1> <c2>` "
+        "(parca-level), it's the number of conditions. The budget is "
+        "divided evenly across conditions and the PCE adequacy assessment "
+        "applies per-condition. Default 1 (single condition).",
+    ),
 ) -> None:
     """Recommend (n_samples, n_init_sims, generations) for a compute budget.
 
@@ -1970,6 +2402,12 @@ def plan(
     from the budget; reports PCE adequacy at the requested polynomial
     order plus alternatives showing the trade-off (halve generations,
     drop replicates to 1). Use before `uq sample` to size a run.
+
+    \b
+    Under --n-conditions M > 1 (multi-condition mode, e.g.
+    `uq sample --design-config`), the budget is divided across M conditions
+    and n_samples is the per-condition count. The reported adequacy ratio
+    applies to each condition's PCE fit individually.
     """
     from uq.vecoli_config import _recommend_compute_allocation
 
@@ -1979,13 +2417,22 @@ def plan(
         polynomial_order=polynomial_order,
         min_replicates=noise_replicates,
         generations=generations,
+        n_conditions=n_conditions,
     )
 
-    console.print(
+    header = (
         f"[bold cyan]Budget:[/bold cyan] {budget} vEcoli runs   "
         f"[dim]·[/dim]   d={n_params}, p={polynomial_order}, "
         f"basis_size={candidates[0].basis_size}"
     )
+    if n_conditions > 1:
+        per_cond_budget = budget // n_conditions
+        header += (
+            f"\n[dim]Multi-condition mode: M={n_conditions} conditions, "
+            f"per-condition budget = {per_cond_budget} runs. Adequacy "
+            f"applies per-condition PCE.[/dim]"
+        )
+    console.print(header)
 
     table = Table(
         box=box.SIMPLE_HEAVY,
@@ -1995,12 +2442,16 @@ def plan(
         title_style="bold magenta",
     )
     table.add_column("OPTION", style="bold yellow")
-    table.add_column("n_samples", justify="right")
+    if n_conditions > 1:
+        table.add_column("n_samples/cond", justify="right")
+    else:
+        table.add_column("n_samples", justify="right")
     table.add_column("n_init_sims", justify="right")
     table.add_column("generations", justify="right")
     table.add_column("ratio (N/B)", justify="right")
     table.add_column("status", justify="left")
     table.add_column("noise floor?", justify="left")
+    table.add_column("total runs", justify="right")
 
     for c in candidates:
         if c.adequacy_status == "underdetermined":
@@ -2018,6 +2469,7 @@ def plan(
             f"{c.adequacy_ratio:.2f}×",
             status_cell,
             noise_cell,
+            f"{c.total_runs:,}",
         )
 
     console.print(Panel(table, border_style="magenta", box=box.ROUNDED, padding=(0, 1)))
