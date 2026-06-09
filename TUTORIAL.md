@@ -19,22 +19,57 @@ and the **PyTUQ UQPC workflow** ([sandialabs.github.io/pytuq/apps/uqpc.html](htt
 ## Quick reference
 
 ```bash
+# Stage 0 — size the run before committing compute (pure arithmetic, no vEcoli)
+uv run uq plan --budget 1000 \
+    --params 6 --polynomial-order 2 \
+    --noise-replicates 4 --generations 4
+
 # Stage 1 — run vEcoli simulations + cache
 uv run uq sample /path/to/simData.cPickle \
     --cache-dir ./uq_cache \
     --n-samples 50 --n-test 10 \
-    --generations 2 --n-init-sims 2
+    --generations 2 --n-init-sims 4
 
 # Stage 2 — PCE fit + Sobol decomposition (no vEcoli calls)
 # Auto-generates report.html in the export directory
+# --bootstrap 200 adds empirical 95% CIs on Sobol indices
 uv run uq quantify /path/to/simData.cPickle \
     --cache-dir ./uq_cache \
     --export-path ./uq_results \
-    --polynomial-order 2 --regression lsq
+    --polynomial-order 2 --regression lsq --bootstrap 200
 
 # Regenerate the HTML report standalone (if needed)
 uv run uq report --results-path ./uq_results
 ```
+
+---
+
+## Stage 0: `uq plan`  (size the run before committing compute)
+
+PCE adequacy is governed by two ratios: `n_samples / basis_size` (does
+the LSQ fit have enough rows?) and `n_init_sims` (≥ 2 to estimate the
+noise floor). `uq plan` solves the bookkeeping problem before you spend
+any vEcoli cycles:
+
+```bash
+uv run uq plan --budget 1000 \
+    --params 6 --polynomial-order 2 \
+    --noise-replicates 4 --generations 4
+```
+
+For a 1000-run budget, 6-param order-2 PCE, the recommended config is
+`n_samples=62, n_init_sims=4, generations=4` (adequacy ratio 2.21×, ok).
+The table also surfaces two alternatives:
+
+- **halve generations** → `n_samples=125, n_init_sims=4, generations=2`
+  (2× the PCE rows, half the cell-cycle coverage)
+- **single replicate** → `n_samples=250, n_init_sims=1, generations=4`
+  (4× the PCE rows, but the Triage 5 noise floor becomes unestimable)
+
+The `status` column (`ok` / `marginal` / `underdetermined`) and the
+`noise floor?` column tell you whether the recommended config is honest
+to interpret without further caveats. If `underdetermined`, raise the
+budget, drop `--polynomial-order`, or plan to use `--regression bcs`.
 
 ---
 
@@ -182,10 +217,10 @@ The flag mapping:
 
 | What happens | Code | RFC / UQPC reference |
 |---|---|---|
-| Encode each sample row as a `sim_data_setattr` variant | `uq/tui.py::_build_variants_from_samples` | RFC006 §4, activity 3: "Implement input→output wrapper functions that can be called from numerical libraries" |
-| Build a vEcoli workflow config JSON | `uq/tui.py::_build_config` | vEcoli variants API ([covertlab.github.io/vEcoli/workflows.html#variants](https://covertlab.github.io/vEcoli/workflows.html#variants)) |
+| Encode each sample row as a `sim_data_setattr` variant | `uq/vecoli_config.py::_build_variants_from_samples` | RFC006 §4, activity 3: "Implement input→output wrapper functions that can be called from numerical libraries" |
+| Build a vEcoli workflow config JSON | `uq/vecoli_config.py::_build_config` | vEcoli variants API ([covertlab.github.io/vEcoli/workflows.html#variants](https://covertlab.github.io/vEcoli/workflows.html#variants)) |
 | Spawn `runscripts/workflow.py --config ...` as a subprocess | `uq/cli.py:175-182` | UQPC step 3 (`--regime online_bb`): "Evaluate the model" |
-| Collect hive-partitioned Parquet via Polars | `uq/tui.py::_collect_variant_timeseries` | RFC006 §4, activity 2: "Enable output of relevant variables" |
+| Collect hive-partitioned Parquet via Polars | `uq/vecoli_config.py::_collect_variant_timeseries` | RFC006 §4, activity 2: "Enable output of relevant variables" |
 
 <details>
 <summary><b>UQPC reference → our code (step 3)</b></summary>
@@ -431,6 +466,75 @@ where `A_i = {α : α_i > 0, α_{k≠i} = 0}`.
 > polynomial chaos expansions.* Reliability Engineering & System Safety
 > 93(7), 964-979.
 
+#### Honesty diagnostics added in §25-D triage
+
+Single-fit Sobol numbers can be misleading on their own — three things
+silently bias the interpretation. `quantify` now prints four additional
+panels that surface what was being hidden:
+
+**DESIGN QUALITY @ order=N** — re-runs the count + κ(A) check at the
+*actual* `--polynomial-order` you passed to `quantify`. The sample-time
+check assumed order 2; if you pass `--polynomial-order 3` the basis
+size jumps from 28 to 84 (for 6 params) and a previously-ok design can
+become underdetermined silently. Status is `ok` / `marginal` /
+`underdetermined`; the κ(A) line below it gives the PyTUQ-native joint
+geometry measure (Triage 2 / Gap 4a).
+
+**SURROGATE QUALITY** — train + (test or CV) relative errors per output.
+
+| Column | Source | When it shows |
+|---|---|---|
+| `TRAIN` | `‖Y − Ŷ‖₂ / ‖Y‖₂` at training rows | always |
+| `TEST` | same on held-out `X_test/Y_test` | when `--n-test > 0` was used at sample time |
+| `CV (5-fold)` | k-fold CV using PyTUQ regression backends per fold | when no test set is present and `N ≥ 2.5 × basis_size` (Triage 3 / Gap 3) |
+
+Training error alone is uninformative — PCE fits training rows nearly
+exactly when N ≈ basis_size. The CV column is the BYO-mode substitute
+for the lost `--n-test` generalization check.
+
+**NOISE FLOOR // ALEATORIC vs EPISTEMIC** — ANOVA-style separation of
+total Y variance into:
+
+```
+Var[Y]_total  =  Var_between_variants  +  Var_within_variants
+                  ↑ epistemic            ↑ aleatoric (noise floor)
+                  ↑ PCE can explain      ↑ irreducible
+```
+
+Computed from vEcoli's `lineage_seed` replicate structure already in
+the cache (Triage 5 / Gap 2). Verdict color-coded by mean signal
+fraction:
+
+| Mean signal | Verdict | Interpretation |
+|---|---|---|
+| ≥ 80% | dim | "Sobol indices interpret straightforwardly" |
+| 50–80% | yellow | Sobol indices undershoot the per-parameter share of the *explainable* variance by ~1/η²× |
+| < 50% | red | Aleatoric exceeds parameter signal — Sobol measures only η²·Var[Y] |
+
+If `n_init_sims = 1` (the default), the panel says "not estimable —
+rerun with `--n-init-sims 4`". This is structural: with one replicate
+per variant there is no within-variant variance to estimate.
+
+**Sobol CIs (`--bootstrap N`)** — standard non-parametric bootstrap
+(Triage 4 / Gap 4b): resample `(X, Y)` rows with replacement, refit the
+PCE via the same `--regression` backend, recompute Sobol via
+`PCRV.computeSens` / `computeTotSens`, accumulate K samples and report
+the 2.5–97.5 percentile interval per parameter. Sobol tables grow from
+`S_Ti` to `S_Ti  [low, high]`. Typical N = 200; sub-second for
+moderate output dimensions. Threaded through all four RFC006 strategies.
+
+Without CIs you cannot tell whether `S_Ti = 0.42` for one parameter and
+`S_Ti = 0.38` for another reflect a real difference or fit noise.
+
+```python
+# Bootstrap loop (uq/workflow.py::_bootstrap_sobol_cis)
+for b in range(n_bootstrap):
+    idx = rng.integers(0, n_samples, size=n_samples)        # resample with replacement
+    pcrv_b.fit(germ[idx], Y[idx])                            # refit PCE
+    main_samples[b], total_samples[b] = pcrv_b.computeSens(), pcrv_b.computeTotSens()
+fo_ci = np.percentile(main_samples, [2.5, 97.5], axis=0).T   # per-param CI
+```
+
 ---
 
 ### How the 4 RFC006 strategies work
@@ -524,6 +628,26 @@ enabling strategies 2 and 3:
 - **Test relative error** (`relerr_test`, when `--n-test > 0`): same metric on
   held-out data.  Large test error with small training error = overfitting —
   reduce `--polynomial-order` or increase `--n-samples`.
+- **CV relative error** (`relerr_cv`, when no test set): 5-fold cross-validation
+  using PyTUQ regression backends per fold.  Replaces `relerr_test` when
+  `--n-test 0` (default) or when BYO mode skipped the held-out draws.  Skipped
+  automatically when `N < 2.5 × basis_size`.
+
+### Sobol confidence intervals
+
+- **Point estimate** (`S_Ti = 0.42`): always reported.  Single-fit Sobol from
+  the PCE coefficients (Sudret 2008).
+- **Empirical 95% CI** (`S_Ti  [low, high]`): printed when `--bootstrap N`
+  is set on `uq quantify`.  Lets you compare two parameters' total-order
+  indices honestly — non-overlapping CIs = the ranking is real, not fit noise.
+
+### Noise floor
+
+- **Signal fraction (η²_between)**: fraction of total Y variance attributable
+  to parameter variation.  PCE Sobol indices are computed against this share.
+- **Noise fraction (η²_within)**: aleatoric / irreducible.  Estimated from
+  vEcoli's per-variant `lineage_seed` replicates.  Verdict color-coded by
+  the mean signal fraction across observables.
 
 ### Regression choice
 

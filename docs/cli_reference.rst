@@ -322,24 +322,54 @@ Options:
     BCS sparsity tolerance (UQPC ``--tol``).  Only used when
     ``--regression=bcs``.  Default ``1e-3``.
 
+``--bootstrap INTEGER``
+    Number of bootstrap resamples for empirical 95% CIs on Sobol indices.
+    Default ``0`` (off).  Standard non-parametric Sobol bootstrap
+    (Archer/Iooss/Saltelli): resample ``(X, Y)`` rows with replacement,
+    refit the PCE via the same PyTUQ regression backend, recompute Sobol
+    via ``PCRV.computeSens`` / ``computeTotSens``, report the 2.5–97.5
+    percentile interval per parameter.  When > 0, Sobol tables grow from
+    ``S_Ti`` to ``S_Ti  [low, high]`` so you can tell whether
+    ``S_Ti = 0.42`` for one parameter and ``S_Ti = 0.38`` for another are
+    meaningfully different.  Typical value: ``200``.  Threaded through
+    all four RFC006 strategies.
+
 Report
 ^^^^^^
 
-``quantify`` produces two reports:
+``quantify`` produces two reports.  Beyond the Sobol tables, the terminal
+report includes four diagnostic panels designed for honest interpretation:
 
-1. **Rich terminal report** (printed to console):
+1. **DESIGN QUALITY @ order=N** — re-runs the count + κ(A) check at the
+   *actual* ``--polynomial-order`` used in this quantify run.  The
+   sample-time check assumed order 2; if you pass ``--polynomial-order 3``
+   the basis size jumps from 28 to 84 (for 6 params) and an ok design at
+   p=2 can become underdetermined at p=3 without this panel catching it.
 
-   * Surrogate quality panel — per-output training relative error and,
-     if the cache contains ``X_test``/``Y_test``, test relative error.
-   * Strategy 1 — population-averaged Sobol indices (bulk).
-   * Strategy 2 — per-generation Sobol (requires ``--generations >= 2``).
-   * Strategy 3 — per-lineage-seed Sobol (requires ``--n-init-sims >= 2``).
-   * Strategy 4 — growth-stratified Sobol across ``n-bins`` stages.
+2. **SURROGATE QUALITY** — per-output training relative error, plus a
+   ``TEST`` column when the cache contains ``X_test``/``Y_test``, plus a
+   ``CV (5-fold)`` column when no held-out test set is present (BYO mode
+   or default with ``--n-test 0``).  k-fold CV is skipped automatically
+   when ``N < 2.5 × basis_size`` — at that point CV error is noise, not
+   generalization, and the subtitle says so.
 
-2. **HTML report** (``report.html`` in the export directory):
-   automatically generated via ``uq report`` — a self-contained HTML
-   file with interactive SVG charts and a PCE surrogate explorer.
-   See ``uq report`` for details.
+3. **NOISE FLOOR // ALEATORIC vs EPISTEMIC** — ANOVA-style separation of
+   total Y variance into between-variant (epistemic, PCE-explainable) and
+   within-variant (aleatoric, irreducible) components using vEcoli's
+   ``lineage_seed`` replicate structure.  Verdict color-coded: signal
+   ≥ 80% dim ("interpret straightforwardly"); 50% ≤ signal < 80% yellow
+   ("Sobol indices undershoot the per-parameter share of *explainable*
+   variance"); < 50% red ("aleatoric exceeds parameter signal").  When
+   ``n_init_sims = 1`` (the default), prints a "not estimable" advisory
+   directing the user to rerun ``uq sample --n-init-sims 4``.
+
+4. **Per-strategy Sobol tables** — population, by-generation,
+   by-lineage-seed, growth-stratified — each shows top parameters with
+   either ``S_Ti`` or ``S_Ti  [95% CI]`` depending on whether
+   ``--bootstrap`` is set.
+
+The **HTML report** (``report.html`` in the export directory) is
+automatically generated via ``uq report``.  See ``uq report`` for details.
 
 ``uq report``
 -------------
@@ -487,6 +517,56 @@ Guided project setup wizard — interactively configure a UQ experiment.
 .. code-block:: text
 
    uv run uq init
+
+``uq plan``
+-----------
+
+Size an upcoming ``uq sample`` run.  Given a compute budget (total vEcoli
+runs) plus PCE settings and replicate targets, derives ``n_samples``
+under the requested constraints and reports PCE adequacy + noise-floor
+estimability for the recommended config plus alternatives showing the
+trade-off.  Pure arithmetic — no model fits, no simData required.
+
+.. code-block:: text
+
+   uv run uq plan [OPTIONS]
+
+Options:
+
+``--budget INTEGER`` (required)
+    Total vEcoli runs available
+    (``n_samples × n_init_sims × generations``).
+
+``--params INTEGER``
+    PCE input dimension.  Default ``6`` (matches
+    ``DEFAULT_SIM_DATA_PARAMETERS``).
+
+``--polynomial-order INTEGER``
+    PCE order at quantify time.  Default ``2``.
+
+``--noise-replicates INTEGER``
+    Minimum ``n_init_sims`` required to estimate the noise floor.
+    Default ``4``.
+
+``--generations INTEGER``
+    Target generations per variant.  Default ``4``.
+
+Output: a table with the recommended config plus up to two alternatives.
+Each row reports ``n_samples``, ``n_init_sims``, ``generations``, the
+adequacy ratio ``N / basis_size``, PCE adequacy status
+(``ok``/``marginal``/``underdetermined``), and whether the noise floor
+will be estimable.  Example::
+
+    Budget: 1000 vEcoli runs   ·   d=6, p=2, basis_size=28
+
+    OPTION             n_samples  n_init_sims  generations  ratio  status  noise floor?
+    recommended              62            4            4   2.21×  ok      yes
+    halve generations       125            4            2   4.46×  ok      yes
+    single replicate        250            1            4   8.93×  ok      no (n=1)
+
+    Trade-offs:
+    - halve generations: 2× the samples for PCE fit, half the cell-cycle coverage.
+    - single replicate: 4× the samples, but Triage 5 / Gap 2 noise floor unestimable.
 
 Programmatic API
 ----------------

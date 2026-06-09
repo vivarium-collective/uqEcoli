@@ -278,6 +278,82 @@ multi-output models we variance-weight across outputs:
 so the final ``first_order`` / ``total_order`` vectors are single
 numbers per parameter that can be rendered as bar charts.
 
+Step 6b — bootstrap Sobol CIs  [``_bootstrap_sobol_cis``]
+---------------------------------------------------------
+
+Single-fit Sobol indices are point estimates with no uncertainty
+quantification.  ``S_{T_i} = 0.42`` for one parameter and
+``S_{T_i} = 0.38`` for another could be a real ranking or it could be
+fit noise — without CIs the user cannot tell.
+
+``--bootstrap N`` on ``uq quantify`` runs the standard non-parametric
+bootstrap (Archer/Iooss/Saltelli convention) on top of steps 4–6:
+
+.. code-block:: text
+
+   for b in range(N):
+       idx = sample n_samples row indices with replacement
+       refit PCE on (germ[idx], Y[idx]) via the same regression backend
+       recompute Sobol via PCRV.computeSens / computeTotSens
+   report per-parameter 2.5–97.5 percentile interval
+
+This is method-agnostic — works identically with ``lsq``, ``bcs``, and
+``anl`` regression.  Threaded through all four RFC006 strategies via
+the ``n_bootstrap`` parameter on ``run_uqpc``.  Sobol tables grow from
+``S_Ti`` to ``S_Ti  [low, high]``.  Typical N = 200 (sub-second for
+moderate output dimensions).
+
+Step 6c — surrogate quality and noise floor diagnostics
+--------------------------------------------------------
+
+Three additional panels surface what raw Sobol numbers can hide.
+
+**Design quality at the actual order** —
+``_print_quantify_adequacy_panel`` re-runs the count adequacy +
+condition-number checks at the ``--polynomial-order`` actually used in
+the current ``quantify`` run.  The sample-time check assumed order 2;
+if the user passes ``--polynomial-order 3`` the basis size jumps from
+:math:`\binom{8}{6} = 28` to :math:`\binom{9}{6} = 84` and an ok design
+at p=2 can become underdetermined silently.  Status:
+``ok`` / ``marginal`` / ``underdetermined`` for the count check;
+``well-conditioned`` / ``marginal`` / ``ill-conditioned`` / ``singular``
+for the κ(A) check.
+
+**Cross-validation when no held-out test set is available** —
+``_k_fold_cv_error`` runs 5-fold CV using the same PyTUQ regression
+backends as the main fit.  Replaces ``--n-test`` validation in BYO
+mode or under ``--n-test 0``.  Cell ``CV (5-fold)`` appears in the
+``SURROGATE QUALITY`` panel.  Skip threshold:
+:math:`N \ge 2.5 \cdot \text{basis\_size}` — under that, each fold's
+training set is itself under-fit and the CV error is just noise.
+
+**Aleatoric vs epistemic decomposition** —
+``_aleatoric_noise_decomposition`` uses vEcoli's ``lineage_seed``
+replicate structure already in the cache to split total :math:`Y`
+variance into:
+
+.. math::
+
+   \mathrm{Var}[Y]_{\text{total}}
+     = \underbrace{\mathrm{Var}_i\!\left[\bar Y_i\right]}_{\text{between-variant: epistemic}}
+     + \underbrace{\mathrm{E}_i\!\left[\mathrm{Var}_k\!\left[Y_{i,k}\right]\right]}_{\text{within-variant: aleatoric}}
+
+where :math:`Y_{i,k}` is the per-seed mean for variant :math:`i`,
+replicate :math:`k`, and :math:`\bar Y_i` is the variant grand mean.
+Signal fraction :math:`\eta^2_{\text{between}} = V_{\text{between}} /
+V_{\text{total}}` reports the share of variance the PCE could possibly
+explain.  Color-coded verdict:
+
+* ≥ 80%: signal dominates — interpret Sobol straightforwardly
+* 50–80%: moderate aleatoric — Sobol undershoots the per-parameter
+  share of *explainable* variance by ~ :math:`1/\eta^2\times`
+* < 50%: aleatoric exceeds parameter signal
+
+When ``n_init_sims = 1`` (the default), the panel reports
+``not estimable`` with an advisory to rerun ``uq sample`` with
+``--n-init-sims 4`` (the recommended minimum for noise-floor
+estimation).
+
 Aggregation strategies (RFC006 §3)
 ----------------------------------
 

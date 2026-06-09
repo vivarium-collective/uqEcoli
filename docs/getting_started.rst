@@ -90,7 +90,8 @@ Stage 2 — quantify
        --cache-dir ./uq_cache \
        --export-path ./uq_results \
        --polynomial-order 3 \
-       --regression lsq
+       --regression lsq \
+       --bootstrap 200
 
 What happens:
 
@@ -102,11 +103,41 @@ What happens:
    the PCE coefficients via ``PCRV.computeSens``/``computeTotSens``
    (Sudret 2008).
 4. Relative training errors (and test errors if ``X_test``/``Y_test``
-   are in the cache) are computed per output and displayed in the Rich
-   report.
-5. A ``QuantifyResult`` is exported to ``./uq_results/`` as a dashboard
+   are in the cache; otherwise a 5-fold CV column) are computed per
+   output and displayed in the Rich report.
+5. With ``--bootstrap 200``, empirical 95% CIs on Sobol indices are
+   computed (non-parametric bootstrap: resample rows → refit PCE →
+   recompute Sobol → percentile interval).  Sobol tables grow from
+   ``S_Ti`` to ``S_Ti  [low, high]``.
+6. A ``DESIGN QUALITY`` panel re-runs the count + κ(A) check at the
+   actual ``--polynomial-order`` used here (catches the case where
+   ``polynomial-order 3`` silently turned an ok design underdetermined).
+7. A ``NOISE FLOOR`` panel separates total Y variance into between-
+   variant (epistemic) and within-variant (aleatoric, from
+   ``lineage_seed`` replicates) components — color-coded by signal
+   fraction.  Reports "not estimable" when ``n_init_sims = 1``.
+8. A ``QuantifyResult`` is exported to ``./uq_results/`` as a dashboard
    schema, per-strategy Sobol ``.npy`` files, and the two PCE surrogates
    (population + growth-stratified).
+
+Sizing a run with ``uq plan``
+-----------------------------
+
+Before launching a vEcoli batch, ``uq plan`` checks whether a compute
+budget is enough for a stable PCE fit at the order you plan to use:
+
+.. code-block:: bash
+
+   uv run uq plan --budget 1000 \
+       --params 6 --polynomial-order 2 \
+       --noise-replicates 4 --generations 4
+
+Pure arithmetic — no simData required.  Prints a recommended
+``(n_samples, n_init_sims, generations)`` allocation plus 1–2
+alternatives showing the trade-off (halve generations → more PCE
+samples; drop to one replicate → maximum samples but no noise-floor
+estimability).  Each row reports the adequacy ratio ``N / basis_size``
+and a status: ``ok`` / ``marginal`` / ``underdetermined``.
 
 Bring your own variants
 -----------------------

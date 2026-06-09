@@ -6,8 +6,167 @@ All notable changes to the vEcoli UQ Framework.
 [Unreleased]
 ------------
 
-BYO-variants escape hatch + ``uq/vecoli_config.py`` refactor (feature branch:
-``feat/v2ecoli-integration``).
+BYO-variants escape hatch + ``uq/vecoli_config.py`` refactor +
+theoretical-soundness triage (feature branch: ``feat/v2ecoli-integration``).
+
+Theoretical-soundness triage
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Six items extending PyTUQ's design-quality vocabulary to surface what the
+single-fit Sobol output had been silently hiding.  Within the framework's
+claimed scope (uniform priors, independent params, smooth-ish stochastic
+response) the pipeline is now theoretically sound.  Out-of-scope regimes
+(non-uniform priors, correlated inputs, discontinuous response, d ≥ 30,
+time-resolved Sobol, BYO selection bias, aleatoric characterization)
+documented as scope limits.
+
+* **Triage 1 / Gap 5 — OOB rejection**
+  (``uq/vecoli_config.py::_check_oob_variants``).  Hard-fails ``uq sample``
+  when any variant/parameter cell falls outside the ``--params-file``
+  bounds.  Runs in both default and BYO modes (PyTUQ-idiomatic: check
+  the data, not the sampler).  No new flags — PyTUQ's ``pdom`` is a
+  hard constraint; vEcoli's ``workflow.py`` fails loudly on bad configs;
+  we match both paradigms.
+* **Triage 1 / Gap 1 — marginal uniformity check** — *collapsed into
+  Gap 4a* per PyTUQ idiom.  Marginal KS is not in PyTUQ's vocabulary;
+  the joint design-quality measure is the design-matrix condition number
+  ``κ(A)``, which subsumes marginal distributional checks.
+* **Triage 2 / Gap 4a — design matrix conditioning**
+  (``uq/vecoli_config.py::_design_matrix_conditioning``).  Computes
+  ``κ(A) = np.linalg.cond(pcrv.evalBases(germ, 0))`` at the requested
+  polynomial order.  Rank-deficiency by shape (N < B) detected before
+  ``np.linalg.cond`` to avoid the misleading wide-matrix pseudo-inverse
+  number.  Thresholds: ``well-conditioned`` (κ ≤ 100), ``marginal``
+  (≤ 1e4), ``ill-conditioned`` (> 1e4), ``singular``.  Rendered in BYO
+  branch at sample time and in every quantify run at the actual
+  ``--polynomial-order`` (see Triage 6).
+* **Triage 3 / Gap 3 — k-fold cross-validation for BYO**
+  (``uq/workflow.py::_k_fold_cv_error``).  Replaces the lost ``--n-test``
+  surrogate-quality check in BYO mode (where independent test draws are
+  impossible).  5-fold CV using PyTUQ regression backends per fold; new
+  ``relerr_cv`` + ``cv_n_folds`` fields on ``UQPCResult``; renders as a
+  ``CV (5-fold)`` column in the SURROGATE QUALITY panel.  Skip threshold
+  ``N ≥ 2.5 × basis_size`` (honest answer: CV with too few samples is
+  noise, not generalization).
+* **Triage 4 / Gap 4b — bootstrap Sobol confidence intervals**
+  (``uq/workflow.py::_bootstrap_sobol_cis``).  Standard non-parametric
+  bootstrap (Archer/Iooss/Saltelli): resample ``(X, Y)`` rows → refit
+  PCE → recompute Sobol via ``PCRV.computeSens`` / ``computeTotSens`` →
+  percentile CI.  New ``--bootstrap N`` flag on ``uq quantify`` (default
+  0 = off).  Threaded through all four strategies.  New
+  ``sobol_first_order_ci``, ``sobol_total_order_ci``, ``n_bootstrap``
+  fields on ``UQPCResult``; CIs render in Sobol tables as
+  ``S_Ti  [low, high]``.
+* **Triage 5 / Gap 2 — aleatoric noise decomposition**
+  (``uq/workflow.py::_aleatoric_noise_decomposition``).  ANOVA-style
+  separation of total Y variance into between-variant (epistemic,
+  PCE-explainable) and within-variant (aleatoric, irreducible)
+  components using vEcoli's ``lineage_seed`` replicate structure
+  already in the cache.  New ``NoiseDecomposition`` dataclass +
+  ``noise_decomposition`` field on ``QuantifyResult``.  NOISE FLOOR
+  panel renders signal/noise fractions per output with a color-coded
+  verdict (signal dominates / moderate aleatoric / aleatoric exceeds).
+  Returns ``status='not_estimable_single_seed'`` when
+  ``n_init_sims = 1`` with a "rerun with ``--n-init-sims 4``" advisory.
+* **Triage 6 / Gaps 6, 7 — quantify-time adequacy + compute planner**.
+  Two pieces.  (a) ``_print_quantify_adequacy_panel`` in ``uq/cli.py``
+  re-runs the count + κ(A) checks at the *actual* ``--polynomial-order``
+  passed to ``uq quantify`` — catches the case where the sample-time
+  check at p=2 was ok but ``--polynomial-order 3`` silently turned the
+  basis underdetermined.  (b) New ``uq plan --budget N --params D
+  --polynomial-order P --noise-replicates K --generations G`` CLI command,
+  backed by ``_recommend_compute_allocation`` and ``ComputeAllocation``
+  in ``uq/vecoli_config.py``.  Returns the recommended allocation plus
+  up to two alternatives (halve generations, drop to 1 replicate)
+  showing the trade-off between PCE adequacy and noise-floor
+  estimability.  Gap 7's per-strategy distinction folded into a single
+  check because all four RFC006 strategies share ``(X, germ)``.
+
+Tests
+^^^^^
+
+55 new tests across five files (61 total in the BYO + triage suite):
+
+* ``tests/test_byo_variants.py`` — extended to 25 tests, now covering
+  ``_check_oob_variants``, ``_pce_basis_size``, ``_pce_sample_adequacy``,
+  ``_design_matrix_conditioning`` in addition to the original §25
+  helpers.
+* ``tests/test_cv.py`` — 6 tests for ``_k_fold_cv_error``.
+* ``tests/test_bootstrap_sobol.py`` — 6 tests for ``_bootstrap_sobol_cis``.
+* ``tests/test_noise_decomposition.py`` — 8 tests for
+  ``_aleatoric_noise_decomposition``.
+* ``tests/test_compute_plan.py`` — 10 tests for
+  ``_recommend_compute_allocation``.
+
+Variant-config conversion and multi-condition design sweeps
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **``uq convert-variants``** — new Typer subcommand + module
+  ``uq/convert_variants.py``. Observational converter that takes any
+  vEcoli variants JSON, runs each entry's ``apply_variant`` against a
+  baseline ``simData.cPickle``, diffs the result, and emits an equivalent
+  ``sim_data_setattr`` mutation list. Module-agnostic; handles
+  ``condition``, ``flux_kinetics``, ``new_gene_internal_shift``, and any
+  custom module. Drives the BYO-variants pipeline (§25-B) for variant
+  configs that don't already use ``sim_data_setattr``. Includes optional
+  ``--emit-params-file`` that auto-derives a ``SimDataParameter`` spec
+  from the union of touched dot-paths with bounds inferred as
+  ``[min, max]`` across variant entries. Pandas-aware diff walker
+  (``_walk_diff`` + ``_values_equal`` + ``_is_opaque_leaf``) so unchanged
+  DataFrames after ``deepcopy`` don't register as spurious differences
+  — fixes a false-positive that was producing 918 warnings per mec.json
+  conversion. Clear ``d = 0`` UX panel when the input variant is
+  structurally non-PCE-tractable, with three concrete next steps.
+
+* **``uq sample --design-config <PATH>``** — new flag for multi-condition
+  GSA on structural variants. Treats the input config's variants block
+  as ``M`` design conditions (e.g. mec.json's
+  ``times × concentrations × knockouts`` cross-product produces 12).
+  vEcoli's ``create_variants.py`` rejects multi-module variants blocks
+  ("Only one variant name allowed"), so we pre-bake the design layer
+  out-of-band: per condition ``j``, deep-copy baseline ``sim_data``,
+  apply ``design_module.apply_variant``, pickle the result under
+  ``cache_dir/condition_<id>/sim_data.cPickle``, then run the standard
+  local UQ workflow with ``sim_data_setattr`` against that pre-baked
+  pickle. The same X (PCRV samples) is reused across all M conditions
+  for paired comparison. Cache layout matches the existing
+  ``--conditions`` (parca-level) contract, so ``uq quantify``
+  auto-detects via ``conditions.json`` and routes to
+  ``quantify_multi_condition`` — zero changes on the quantify side.
+  Per-design attr_path vs ``--params-file`` overlap warning surfaced
+  before sub-runs. New helpers ``_design_condition_id``,
+  ``_apply_design_to_baseline``, ``_design_layer_attr_paths`` in
+  ``uq/vecoli_config.py``. Mutually exclusive with
+  ``--variants-source base-config``, ``--api-url``, and
+  ``--backend v2ecoli``.
+
+* **``uq plan --n-conditions M``** — multi-condition budget planner.
+  Divides the total budget evenly across M conditions; ``n_samples`` is
+  reported as the per-condition sample count and the adequacy ratio
+  applies to each condition's PCE fit individually. ``total_runs``
+  column accounts for the M factor. ``ComputeAllocation`` dataclass
+  gains an ``n_conditions: int`` field; default of 1 preserves single-
+  condition behavior exactly.
+
+v2ecoli backend parity (deferred)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Most of the triage tier (OOB, k-fold CV, bootstrap CIs, quantify-time
+adequacy, ``uq plan``) works on v2ecoli caches with no changes — they
+operate on the cached ``(X, germ, Y)`` or on PyTUQ primitives.  Two
+real gaps remain, tracked as ``todo.md §25-E``:
+
+* §25-E1: ``--variants-source base-config`` is hard-rejected with
+  ``--backend v2ecoli`` (v2ecoli mutates via in-memory dot-path
+  overrides, not via the ``sim_data_setattr`` JSON the §25-B reverse-map
+  reads).  Needs a v2ecoli-format ``--mutations-file`` equivalent.
+* §25-E2: ``V2ecoliGenerator`` ignores ``n_init_sims`` (runs one
+  replicate per variant by design).  Consequence: Triage 5 / Gap 2
+  noise floor always reports ``not_estimable_single_seed`` on v2ecoli
+  caches.  Needs ``n_init_sims`` plumbed through the generator's
+  inner-run loop.
+
+BYO-variants escape hatch + ``uq/vecoli_config.py`` refactor
 
 Added
 ^^^^^
