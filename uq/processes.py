@@ -165,7 +165,7 @@ class RunSimulations(Step):
     def update(self, state: dict) -> dict:
         from libuq.pipeline.models import SimDataParameter
         from libuq.pipeline.param_loader import ParameterDataset
-        from uq.tui import (
+        from uq.vecoli_config import (
             _build_config,
             _build_variants_from_samples,
             _get_vecoli_root,
@@ -275,7 +275,7 @@ class CollectCache(Step):
 
     def update(self, state: dict) -> dict:
         from libuq.sampling import PrecomputedCache
-        from uq.tui import _collect_variant_timeseries
+        from uq.vecoli_config import _collect_variant_timeseries
 
         history_base = Path(state["history_base"])
         cache_path = Path(state["cache_dir"]).resolve()

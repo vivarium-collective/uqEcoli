@@ -89,6 +89,16 @@ class UQPCResult:
         Y_test_pc: PCE predictions at test points (None if no test set).
         Y_test_pc_std: Prediction std dev at test points.
         relerr_test: Per-output relative error at test points.
+        relerr_cv: Per-output relative error from k-fold cross-validation
+            (used in place of relerr_test when no independent test set is
+            available — BYO mode or default mode with ``--n-test 0``).
+        cv_n_folds: Number of folds used to compute relerr_cv (0 = not run).
+        sobol_first_order_ci: Empirical 95% CI on first-order Sobol indices
+            from bootstrap, shape (n_params, 2) — columns [low, high].
+            None when bootstrap not run.
+        sobol_total_order_ci: Empirical 95% CI on total-order Sobol indices,
+            shape (n_params, 2). None when bootstrap not run.
+        n_bootstrap: Number of bootstrap resamples actually used (0 = off).
     """
 
     sobol: SobolIndices
@@ -107,6 +117,11 @@ class UQPCResult:
     Y_test_pc: np.ndarray | None = None
     Y_test_pc_std: np.ndarray | None = None
     relerr_test: np.ndarray | None = None
+    relerr_cv: np.ndarray | None = None
+    cv_n_folds: int = 0
+    sobol_first_order_ci: np.ndarray | None = None
+    sobol_total_order_ci: np.ndarray | None = None
+    n_bootstrap: int = 0
 
 
 # ── Step 1: Input PC setup ──────────────────────────────────────────
@@ -405,6 +420,304 @@ def _compute_relative_errors(
     return np.linalg.norm(Y_true - Y_pred, axis=0) / norms  # type: ignore[no-any-return]
 
 
+def _k_fold_cv_error(
+    germ: np.ndarray,
+    Y: np.ndarray,
+    polynomial_order: int,
+    regression: str = "lsq",
+    tolerance: float = 1e-3,
+    n_folds: int = 5,
+    seed: int | None = 42,
+) -> tuple[np.ndarray, int]:
+    """Per-output relative L2 error from k-fold cross-validation.
+
+    Used as a generalization measure when no independent held-out test
+    set is available (BYO mode, or default mode with ``--n-test 0``).
+    PyTUQ-idiomatic: same fit machinery as `_fit_surrogate`, just looped
+    over folds — basis matrix per fold, regression backend per output,
+    predict on held-out rows, accumulate residuals.
+
+    Skips (returns zero-length array, ``n_folds=0``) when ``germ.shape[0]``
+    is too small to leave any rows out for validation:
+    ``n_samples < 2 * basis_size`` is the standard cutoff (under that, the
+    in-fold training set is itself under-fit and the CV error is noise).
+
+    Returns:
+        (relerr_cv, n_folds_actually_run) — per-output mean CV relative
+        error across folds, plus the fold count actually used (0 if skipped).
+    """
+    n_samples, n_dim = germ.shape
+    if Y.ndim == 1:
+        Y = Y.reshape(-1, 1)
+    n_out = Y.shape[1]
+
+    mindex = get_mi(polynomial_order, n_dim)
+    basis_size = mindex.shape[0]
+
+    # Don't run CV when even a single fold's training set is too small to
+    # honestly fit the basis. Cutoff: 2× basis_size for the training set —
+    # so n_samples > 2*basis_size * n_folds/(n_folds-1). For 5-fold that's
+    # roughly 2.5 × basis_size as a floor on n_samples.
+    min_samples = int(np.ceil(2.0 * basis_size * n_folds / (n_folds - 1)))
+    if n_samples < min_samples:
+        return np.array([], dtype=float), 0
+
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(n_samples)
+    fold_sizes = np.full(n_folds, n_samples // n_folds)
+    fold_sizes[: n_samples % n_folds] += 1
+
+    Y_pred_oof = np.zeros_like(Y, dtype=float)
+    start = 0
+    for fold_size in fold_sizes:
+        test_idx = perm[start : start + fold_size]
+        train_idx = np.setdiff1d(perm, test_idx, assume_unique=False)
+        start += fold_size
+
+        germ_tr, Y_tr = germ[train_idx], Y[train_idx]
+        germ_te = germ[test_idx]
+
+        pcrv_fold = PCRV(n_out, n_dim, "LU", mi=mindex)
+        Amat_tr = pcrv_fold.evalBases(germ_tr, 0)
+
+        mindices_list: list[np.ndarray] = []
+        cfs_list: list[np.ndarray] = []
+        for j in range(n_out):
+            if regression == "bcs":
+                lreg_obj = bcs(eta=tolerance)
+            elif regression == "anl":
+                lreg_obj = anl()
+            else:  # lsq (default)
+                lreg_obj = lsq()
+            lreg_obj.fita(Amat_tr, Y_tr[:, j])
+            mindices_list.append(mindex[lreg_obj.used, :])
+            cfs_list.append(lreg_obj.cf)
+
+        pcrv_fold.setMiCfs(mindices_list, cfs_list)
+        pcrv_fold.setFunction()
+        Y_pred_oof[test_idx] = pcrv_fold.function(germ_te)
+
+    return _compute_relative_errors(Y, Y_pred_oof), n_folds
+
+
+@dataclass
+class NoiseDecomposition:
+    """ANOVA-style variance decomposition between epistemic (parameter) and
+    aleatoric (stochastic / noise) sources.
+
+    Computed from vEcoli's lineage_seed replicate structure: each variant
+    has ``n_init_sims`` independent stochastic realizations, and the
+    within-variant variance across those replicates is the noise floor.
+
+    Attributes:
+        per_output_signal_fraction: Var_between / Var_total per output
+            column (the fraction of variance the PCE can possibly explain).
+        per_output_noise_fraction: Var_within / Var_total per output (the
+            irreducible aleatoric fraction).
+        observable_names: Names matching the per-output arrays.
+        n_replicates_per_variant: Variant → seed count. Useful to detect
+            unbalanced designs.
+        status: 'estimated' = honest decomposition; 'not_estimable_single_seed'
+            = every variant has only one replicate (n_init_sims = 1);
+            'unbalanced' = variants have different replicate counts (still
+            computed but the decomposition is heuristic).
+    """
+
+    per_output_signal_fraction: np.ndarray
+    per_output_noise_fraction: np.ndarray
+    observable_names: list[str]
+    n_replicates_per_variant: dict[int, int]
+    status: str  # "estimated" | "not_estimable_single_seed" | "unbalanced"
+
+
+def _aleatoric_noise_decomposition(
+    Y_timeseries: list[np.ndarray],
+    Y_timeseries_meta: list[dict[str, np.ndarray]] | None,
+    observable_names: list[str] | None = None,
+) -> NoiseDecomposition | None:
+    """Decompose total output variance into between-variant + within-variant
+    components using vEcoli's per-seed replicate structure.
+
+    Per-variant per-seed *mean* is the natural replicate unit (independent
+    stochastic realization of f(x_i; seed_k)). Variance over these means
+    decomposes by the law of total variance::
+
+        Var(Y) = Var_between(variant means) + Var_within(variant means)
+
+    Returns None if metadata lacks ``lineage_seed`` (can't group replicates)
+    or if Y_timeseries is empty. Returns a ``NoiseDecomposition`` with
+    status='not_estimable_single_seed' if every variant has only one seed
+    (n_init_sims = 1) — the helper still runs but reports the limitation
+    honestly rather than producing a misleading zero noise floor.
+    """
+    if not Y_timeseries or Y_timeseries_meta is None:
+        return None
+
+    n_variants = len(Y_timeseries)
+    if observable_names is None:
+        n_out = Y_timeseries[0].shape[1]
+        observable_names = [f"output[{j}]" for j in range(n_out)]
+    else:
+        n_out = len(observable_names)
+
+    # Collect per-variant per-seed means: variant_means[i] is a (n_seeds_i, n_out)
+    # matrix of time-averaged outputs, one row per lineage seed.
+    variant_means: list[np.ndarray] = []
+    seed_counts: dict[int, int] = {}
+    for i, ts in enumerate(Y_timeseries):
+        meta = Y_timeseries_meta[i] if i < len(Y_timeseries_meta) else {}
+        if "lineage_seed" not in meta:
+            return None
+        seeds = np.asarray(meta["lineage_seed"])
+        if seeds.shape[0] != ts.shape[0]:
+            return None
+        unique_seeds = np.unique(seeds)
+        per_seed = np.empty((len(unique_seeds), n_out), dtype=float)
+        for k, s in enumerate(unique_seeds):
+            mask = seeds == s
+            per_seed[k] = ts[mask].mean(axis=0)
+        variant_means.append(per_seed)
+        seed_counts[i] = len(unique_seeds)
+
+    seed_count_values = set(seed_counts.values())
+    if seed_count_values == {1}:
+        return NoiseDecomposition(
+            per_output_signal_fraction=np.ones(n_out, dtype=float),
+            per_output_noise_fraction=np.zeros(n_out, dtype=float),
+            observable_names=observable_names,
+            n_replicates_per_variant=seed_counts,
+            status="not_estimable_single_seed",
+        )
+
+    status = "estimated" if len(seed_count_values) == 1 else "unbalanced"
+
+    # Per-variant grand mean across that variant's seeds.
+    grand_means = np.stack([vm.mean(axis=0) for vm in variant_means], axis=0)
+
+    # Within-variant variance: averaged across variants that have ≥ 2 seeds.
+    within_vars = np.zeros(n_out, dtype=float)
+    n_used = 0
+    for vm in variant_means:
+        if vm.shape[0] < 2:
+            continue
+        # ddof=1 → unbiased per-variant variance estimator
+        within_vars += np.var(vm, axis=0, ddof=1)
+        n_used += 1
+    if n_used > 0:
+        within_vars /= n_used
+
+    # Between-variant variance: variance of the grand means across variants.
+    between_vars = (
+        np.var(grand_means, axis=0, ddof=1) if n_variants > 1 else np.zeros(n_out)
+    )
+
+    total_vars = between_vars + within_vars
+    # Avoid division by zero for constant outputs.
+    safe_total = np.where(total_vars > 0, total_vars, 1.0)
+    signal_frac = between_vars / safe_total
+    noise_frac = within_vars / safe_total
+    # For constant outputs (total=0) report signal=1, noise=0 (no variance at all).
+    signal_frac = np.where(total_vars > 0, signal_frac, 1.0)
+    noise_frac = np.where(total_vars > 0, noise_frac, 0.0)
+
+    return NoiseDecomposition(
+        per_output_signal_fraction=signal_frac,
+        per_output_noise_fraction=noise_frac,
+        observable_names=observable_names,
+        n_replicates_per_variant=seed_counts,
+        status=status,
+    )
+
+
+def _bootstrap_sobol_cis(
+    germ: np.ndarray,
+    Y: np.ndarray,
+    polynomial_order: int,
+    parameter_names: list[str],
+    regression: str = "lsq",
+    tolerance: float = 1e-3,
+    n_bootstrap: int = 0,
+    seed: int | None = 42,
+    ci_level: float = 0.95,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Empirical bootstrap CIs on Sobol indices.
+
+    Standard non-parametric bootstrap (Archer/Iooss/Saltelli convention):
+    resample rows with replacement, refit PCE, recompute Sobol from the
+    fitted PCRV (PyTUQ's analytical computeSens/computeTotSens), accumulate
+    a distribution, return per-parameter percentile intervals.
+
+    Works with any PyTUQ regression backend — uses the same primitives as
+    `_fit_surrogate` and `_compute_sobol`.
+
+    Returns:
+        (first_order_ci, total_order_ci) — each shape (n_params, 2) with
+        columns [low, high], or (None, None) when n_bootstrap == 0.
+    """
+    if n_bootstrap <= 0:
+        return None, None
+
+    n_samples, n_dim = germ.shape
+    if Y.ndim == 1:
+        Y = Y.reshape(-1, 1)
+    n_out = Y.shape[1]
+    n_params = n_dim
+
+    mindex = get_mi(polynomial_order, n_dim)
+
+    rng = np.random.default_rng(seed)
+    fo_samples = np.empty((n_bootstrap, n_params), dtype=float)
+    to_samples = np.empty((n_bootstrap, n_params), dtype=float)
+
+    for b in range(n_bootstrap):
+        idx = rng.integers(0, n_samples, size=n_samples)
+        germ_b, Y_b = germ[idx], Y[idx]
+
+        pcrv_b = PCRV(n_out, n_dim, "LU", mi=mindex)
+        Amat_b = pcrv_b.evalBases(germ_b, 0)
+
+        mindices_list: list[np.ndarray] = []
+        cfs_list: list[np.ndarray] = []
+        for j in range(n_out):
+            if regression == "bcs":
+                lreg_obj = bcs(eta=tolerance)
+            elif regression == "anl":
+                lreg_obj = anl()
+            else:
+                lreg_obj = lsq()
+            lreg_obj.fita(Amat_b, Y_b[:, j])
+            mindices_list.append(mindex[lreg_obj.used, :])
+            cfs_list.append(lreg_obj.cf)
+
+        pcrv_b.setMiCfs(mindices_list, cfs_list)
+        # Per-output Sobol, then variance-weight across outputs (matches
+        # _compute_sobol so the bootstrap distribution is around the
+        # reported point estimate).
+        main_b = pcrv_b.computeSens()
+        total_b = pcrv_b.computeTotSens()
+        if n_out == 1:
+            fo_samples[b] = main_b[0]
+            to_samples[b] = total_b[0]
+        else:
+            output_vars_b = np.var(Y_b, axis=0)
+            tot_var = output_vars_b.sum()
+            weights = output_vars_b / tot_var if tot_var > 0 else np.ones(n_out) / n_out
+            fo_samples[b] = (weights[:, None] * main_b).sum(axis=0)
+            to_samples[b] = (weights[:, None] * total_b).sum(axis=0)
+
+    lo_q = 100.0 * (1.0 - ci_level) / 2.0
+    hi_q = 100.0 * (1.0 + ci_level) / 2.0
+    fo_ci = np.column_stack([
+        np.percentile(fo_samples, lo_q, axis=0),
+        np.percentile(fo_samples, hi_q, axis=0),
+    ])
+    to_ci = np.column_stack([
+        np.percentile(to_samples, lo_q, axis=0),
+        np.percentile(to_samples, hi_q, axis=0),
+    ])
+    return fo_ci, to_ci
+
+
 # ── Step 6: Compute Sobol indices ───────────────────────────────────
 
 
@@ -521,6 +834,7 @@ def run_uqpc(
     X_test: np.ndarray | None = None,
     Y_test: np.ndarray | None = None,
     seed: int | None = 42,
+    n_bootstrap: int = 0,
 ) -> UQPCResult:
     """Execute the full UQPC workflow for a single aggregation strategy.
 
@@ -643,8 +957,34 @@ def run_uqpc(
         relerr_test = _compute_relative_errors(Y_test, Y_test_pc)
         logger.info("Test relative errors: %s", relerr_test)
 
+    # k-fold CV — generalization estimate when no independent test set
+    # exists (BYO mode, or default mode with --n-test 0). Held-out test
+    # always wins when available; CV is the fallback.
+    relerr_cv: np.ndarray | None = None
+    cv_n_folds = 0
+    if Y_test is None:
+        cv_err, cv_n_folds = _k_fold_cv_error(
+            germ_train, Y_train, polynomial_order,
+            regression=regression, tolerance=tolerance, seed=seed,
+        )
+        if cv_n_folds > 0:
+            relerr_cv = cv_err
+            logger.info(
+                "%d-fold CV relative errors: %s", cv_n_folds, relerr_cv,
+            )
+
     # ── Step 6: Sobol indices ──
     sobol = _compute_sobol(output_pcrv, parameter_names, Y_train)
+
+    # Bootstrap CIs on Sobol indices (PyTUQ-paradigm: explicit opt-in via
+    # n_bootstrap > 0; default off to preserve fast-path semantics).
+    sobol_fo_ci, sobol_to_ci = _bootstrap_sobol_cis(
+        germ_train, Y_train, polynomial_order, parameter_names,
+        regression=regression, tolerance=tolerance,
+        n_bootstrap=n_bootstrap, seed=seed,
+    )
+    if n_bootstrap > 0:
+        logger.info("Bootstrap CIs computed from %d resamples", n_bootstrap)
 
     # ── Build exportable surrogate ──
     surrogate = _build_surrogate(
@@ -672,6 +1012,11 @@ def run_uqpc(
         Y_test_pc=Y_test_pc,
         Y_test_pc_std=Y_test_pc_std,
         relerr_test=relerr_test,
+        relerr_cv=relerr_cv,
+        cv_n_folds=cv_n_folds,
+        sobol_first_order_ci=sobol_fo_ci,
+        sobol_total_order_ci=sobol_to_ci,
+        n_bootstrap=n_bootstrap if sobol_fo_ci is not None else 0,
     )
 
 
@@ -769,6 +1114,20 @@ def run_uqpc_live(
         relerr_test = _compute_relative_errors(Y_test, Y_test_pc)
         logger.info("Test relative errors: %s", relerr_test)
 
+    # k-fold CV fallback when no independent test set is available.
+    relerr_cv: np.ndarray | None = None
+    cv_n_folds = 0
+    if Y_test is None:
+        cv_err, cv_n_folds = _k_fold_cv_error(
+            germ_train, Y_train, polynomial_order,
+            regression=regression, tolerance=tolerance, seed=seed,
+        )
+        if cv_n_folds > 0:
+            relerr_cv = cv_err
+            logger.info(
+                "%d-fold CV relative errors: %s", cv_n_folds, relerr_cv,
+            )
+
     # ── Step 6: Sobol indices ──
     parameter_names = param_space.parameter_names
     sobol = _compute_sobol(output_pcrv, parameter_names, Y_train)
@@ -800,6 +1159,8 @@ def run_uqpc_live(
         Y_test_pc=Y_test_pc,
         Y_test_pc_std=Y_test_pc_std,
         relerr_test=relerr_test,
+        relerr_cv=relerr_cv,
+        cv_n_folds=cv_n_folds,
     )
 
 
@@ -851,6 +1212,7 @@ def run_strategy1_uniform(
     X_test: np.ndarray | None = None,
     Y_test: np.ndarray | None = None,
     seed: int | None = 42,
+    n_bootstrap: int = 0,
 ) -> UQPCResult:
     """Strategy 1: UQPC on uniformly aggregated (bulk) outputs.
 
@@ -882,6 +1244,7 @@ def run_strategy1_uniform(
         X_test=X_test,
         Y_test=Y_test,
         seed=seed,
+        n_bootstrap=n_bootstrap,
     )
 
 
@@ -894,6 +1257,7 @@ def run_strategy2_by_generation(
     regression: str = "lsq",
     tolerance: float = 1e-3,
     seed: int | None = 42,
+    n_bootstrap: int = 0,
 ) -> dict[int, UQPCResult]:
     """Strategy 2: UQPC per generation.
 
@@ -929,6 +1293,7 @@ def run_strategy2_by_generation(
             regression=regression,
             tolerance=tolerance,
             seed=seed,
+            n_bootstrap=n_bootstrap,
         )
 
     return results
@@ -943,6 +1308,7 @@ def run_strategy3_by_seed(
     regression: str = "lsq",
     tolerance: float = 1e-3,
     seed: int | None = 42,
+    n_bootstrap: int = 0,
 ) -> dict[int, UQPCResult]:
     """Strategy 3: UQPC per lineage seed.
 
@@ -977,6 +1343,7 @@ def run_strategy3_by_seed(
             regression=regression,
             tolerance=tolerance,
             seed=seed,
+            n_bootstrap=n_bootstrap,
         )
 
     return results
@@ -992,6 +1359,7 @@ def run_strategy4_growth_stratified(
     regression: str = "lsq",
     tolerance: float = 1e-3,
     seed: int | None = 42,
+    n_bootstrap: int = 0,
 ) -> tuple[list[UQPCResult], UQPCResult]:
     """Strategy 4: UQPC stratified by cell cycle stage (growth progress).
 
@@ -1054,6 +1422,7 @@ def run_strategy4_growth_stratified(
         regression=regression,
         tolerance=tolerance,
         seed=seed,
+        n_bootstrap=n_bootstrap,
     )
 
     # Also fit per-stage for individual diagnostics
@@ -1068,6 +1437,7 @@ def run_strategy4_growth_stratified(
             regression=regression,
             tolerance=tolerance,
             seed=seed,
+            n_bootstrap=n_bootstrap,
         )
         per_stage_results.append(result)
         logger.info(
@@ -1201,6 +1571,7 @@ class QuantifyResult:
     parameter_names: list[str]
     observable_names: list[str]
     cache: PrecomputedCache
+    noise_decomposition: NoiseDecomposition | None = None
 
     def export(self, export_dir: str | Path, cli_argv: list[str] | None = None) -> Path:
         """Write all strategy artifacts to *export_dir*.
@@ -1390,6 +1761,7 @@ def _write_manifest(
             "uqEcoli": _git_sha(uqecoli_root),
             "vEcoli": vecoli_sha,
         },
+        "backend": cache.metadata.get("backend", ""),
         "cli_command": cli_argv or sys.argv,
         "data_hashes": {
             "X.npy": _sha256_file(cache.cache_dir / "X.npy"),
@@ -1708,6 +2080,7 @@ def quantify(
     parameters: list[SimDataParameter] | None = None,
     export_path: str | Path | None = None,
     seed: int | None = 42,
+    n_bootstrap: int = 0,
 ) -> QuantifyResult:
     """UQPC Steps 4-5: build PC surrogates, compute Sobol indices.
 
@@ -1822,6 +2195,7 @@ def quantify(
         X_test=cache.X_test,
         Y_test=cache.Y_test,
         seed=seed,
+        n_bootstrap=n_bootstrap,
     )
     if cache.X_test is not None:
         logger.info(
@@ -1843,6 +2217,7 @@ def quantify(
             regression=regression,
             tolerance=tolerance,
             seed=seed,
+            n_bootstrap=n_bootstrap,
         )
 
     # Strategy 3: by lineage seed
@@ -1858,6 +2233,7 @@ def quantify(
             regression=regression,
             tolerance=tolerance,
             seed=seed,
+            n_bootstrap=n_bootstrap,
         )
 
     # Strategy 4: growth-stratified
@@ -1874,10 +2250,26 @@ def quantify(
             regression=regression,
             tolerance=tolerance,
             seed=seed,
+            n_bootstrap=n_bootstrap,
         )
     else:
         s4_combined = s1
         logger.warning("Strategy 4: no timeseries in cache, using bulk as fallback")
+
+    # Aleatoric vs epistemic decomposition from vEcoli's lineage_seed
+    # replicate structure. Cheap; uses cache data already in memory.
+    noise_decomp = _aleatoric_noise_decomposition(
+        cache.Y_timeseries or [],
+        cache.Y_timeseries_meta,
+        observable_names=obs,
+    )
+    if noise_decomp is not None:
+        logger.info(
+            "Noise decomposition (status=%s): mean signal=%.3f, mean noise=%.3f",
+            noise_decomp.status,
+            float(noise_decomp.per_output_signal_fraction.mean()),
+            float(noise_decomp.per_output_noise_fraction.mean()),
+        )
 
     result = QuantifyResult(
         strategy1=s1,
@@ -1888,6 +2280,7 @@ def quantify(
         parameter_names=param_space.parameter_names,
         observable_names=obs,
         cache=cache,
+        noise_decomposition=noise_decomp,
     )
 
     if export_path is not None:

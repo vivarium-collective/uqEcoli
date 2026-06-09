@@ -124,6 +124,15 @@ def sample(
         help="Max parallel workers for v2ecoli backend (default: 1). "
         "Ignored for vecoli (Nextflow handles parallelism).",
     ),
+    variants_source: str = typer.Option(
+        "params-file",
+        help="Where vEcoli `variants` come from. "
+        "`params-file` (default): PCRV-sample from --params-file bounds, "
+        "encode as sim_data_setattr. "
+        "`base-config`: trust the `variants` block in --base-config verbatim, "
+        "reverse-map mutation values into X for `quantify` "
+        "(local --backend vecoli only, requires sim_data_setattr module).",
+    ),
 ) -> None:
     """UQPC Steps 1-3: sample via PCRV.sampleGerm(), run vEcoli.
 
@@ -153,14 +162,65 @@ def sample(
     from libuq.pipeline.models import SimDataParameter
     from libuq.pipeline.param_loader import DEFAULT_SIM_DATA_PARAMETERS, ParameterDataset
     from libuq.sampling import PrecomputedCache
+    from uq.vecoli_config import (
+        _check_oob_variants,
+        _design_matrix_conditioning,
+        _germ_from_physical,
+        _load_variants_from_base_config,
+        _pce_sample_adequacy,
+        _x_from_variants,
+    )
     from uq.workflow import _setup_input_pc
+
+    # ── Validate variants-source compatibility ──
+    if variants_source not in ("params-file", "base-config"):
+        console.print(
+            f"[red]Unknown --variants-source '{variants_source}'. "
+            "Use 'params-file' or 'base-config'.[/red]"
+        )
+        raise typer.Exit(1)
+
+    is_remote = api_url is not None
+    is_byo = variants_source == "base-config"
+
+    if is_byo:
+        # Local mode only for now — the BYO reverse-mapping path is unverified
+        # against remote (X_all isn't pushed to SMS-API yet, todo §25-C) and
+        # v2ecoli (different cache-bundle codepath).
+        if is_remote:
+            console.print(
+                "[red]--variants-source base-config is not supported with "
+                "--api-url. Remote mutation pushdown is todo §25-C.[/red]"
+            )
+            raise typer.Exit(1)
+        if backend == "v2ecoli":
+            console.print(
+                "[red]--variants-source base-config is not supported with "
+                "--backend v2ecoli yet. Use --backend vecoli.[/red]"
+            )
+            raise typer.Exit(1)
+        if base_config is None:
+            console.print(
+                "[red]--variants-source base-config requires --base-config "
+                "<PATH> to a vEcoli config JSON with a `variants` block.[/red]"
+            )
+            raise typer.Exit(1)
+        if n_test > 0:
+            console.print(
+                "[yellow]--n-test is ignored under --variants-source "
+                "base-config; held-out validation requires PCRV sampling.[/yellow]"
+            )
+            n_test = 0
 
     # ── Step 1: Setup inputs ──
     sim_data_path = str(Path(sim_data_path).resolve())
     cache_path = Path(cache_dir).resolve()
-    is_remote = api_url is not None
 
-    mode_label = f"[bold magenta]REMOTE → {api_url}[/bold magenta]" if is_remote else "[dim]LOCAL[/dim]"
+    mode_label = (
+        f"[bold magenta]REMOTE → {api_url}[/bold magenta]" if is_remote
+        else "[bold yellow]LOCAL · BYO variants[/bold yellow]" if is_byo
+        else "[dim]LOCAL[/dim]"
+    )
     console.print(f"[bold cyan]Sampling:[/bold cyan] {n_samples} variants, {n_init_sims} seeds, {generations} gens  {mode_label}")
     console.print(f"  [dim]simData: {sim_data_path}[/dim]")
     console.print(f"  [dim]cache:   {cache_path}[/dim]")
@@ -176,25 +236,86 @@ def sample(
     bounds = np.array(param_space.parameter_bounds)
     console.print(f"  [dim]{param_space.n_parameters} params: {param_space.parameter_names}[/dim]")
 
-    # ── Step 2: Generate samples via PCRV ──
-    console.print("[dim]Step 2: PCRV.sampleGerm()...[/dim]")
-    input_pc, _, _ = _setup_input_pc(bounds)
-    np.random.seed(seed)
-    germ_train = input_pc.sampleGerm(n_samples)
-    X_train = input_pc.evalPC(germ_train)
-    console.print(f"  [dim]X shape: {X_train.shape}[/dim]")
-
-    # UQPC ``--ntst``: draw additional held-out validation samples
     germ_test: np.ndarray | None = None
     X_test: np.ndarray | None = None
-    if n_test > 0:
-        np.random.seed(seed + 1)
-        germ_test = input_pc.sampleGerm(n_test)
-        X_test = input_pc.evalPC(germ_test)
-        console.print(f"  [dim]X_test shape: {X_test.shape} (held-out validation)[/dim]")
+
+    if is_byo:
+        # ── Step 2 (BYO): reverse-map variants block → X ──
+        console.print(f"[dim]Step 2: reading variants from {base_config}...[/dim]")
+        variants_block = _load_variants_from_base_config(base_config)  # type: ignore[arg-type]
+        X_train = _x_from_variants(variants_block, param_space._sim_data_parameters)
+        n_samples = X_train.shape[0]
+        germ_train = _germ_from_physical(X_train, bounds)
+        console.print(f"  [dim]X shape: {X_train.shape}  (n_samples forced to {n_samples})[/dim]")
+
+        # PCE basis-size diagnostic — n_samples is forced by the user's
+        # variants list, so check it against the default quantify order (2).
+        # Users who pass a different --polynomial-order to quantify can
+        # ignore this if they're planning to drop to order 1.
+        status, advisory = _pce_sample_adequacy(
+            n_samples, param_space.n_parameters, order=2,
+        )
+        if status == "underdetermined":
+            console.print(f"  [red]PCE adequacy: {advisory}[/red]")
+        elif status == "marginal":
+            console.print(f"  [yellow]PCE adequacy: {advisory}[/yellow]")
+        else:
+            console.print(f"  [dim]PCE adequacy: {advisory}[/dim]")
+
+        # Design-matrix conditioning — PyTUQ-native joint design-quality
+        # measure (subsumes marginal uniformity). Skip when count is
+        # underdetermined (κ will be ∞ as a tautology from N < B).
+        if status != "underdetermined":
+            kappa, cond_status, cond_advisory = _design_matrix_conditioning(
+                germ_train, param_space.n_parameters, order=2,
+            )
+            if cond_status in ("ill-conditioned", "singular"):
+                console.print(f"  [red]Design κ(A): {cond_advisory}[/red]")
+            elif cond_status == "marginal":
+                console.print(f"  [yellow]Design κ(A): {cond_advisory}[/yellow]")
+            else:
+                console.print(f"  [dim]Design κ(A): {cond_advisory}[/dim]")
+    else:
+        # ── Step 2 (PCRV): sample germ → physical via PCRV ──
+        console.print("[dim]Step 2: PCRV.sampleGerm()...[/dim]")
+        input_pc, _, _ = _setup_input_pc(bounds)
+        np.random.seed(seed)
+        germ_train = input_pc.sampleGerm(n_samples)
+        X_train = input_pc.evalPC(germ_train)
+        console.print(f"  [dim]X shape: {X_train.shape}[/dim]")
+
+        # UQPC ``--ntst``: draw additional held-out validation samples
+        if n_test > 0:
+            np.random.seed(seed + 1)
+            germ_test = input_pc.sampleGerm(n_test)
+            X_test = input_pc.evalPC(germ_test)
+            console.print(f"  [dim]X_test shape: {X_test.shape} (held-out validation)[/dim]")
 
     # Concatenate train + test; vEcoli evaluates all variants in one workflow.
     X_all = np.vstack([X_train, X_test]) if X_test is not None else X_train
+
+    # ── PyTUQ pdom invariant: every (variant, parameter) cell within bounds ──
+    # PyTUQ treats pdom as a hard constraint; vEcoli's workflow.py fails
+    # loudly on invalid configs. So we fail loudly here too — no soft
+    # warning, no auto-bounds, no escape hatch. Runs in both modes; under
+    # default PCRV sampling this is a no-op (evalPC stays within bounds).
+    violations = _check_oob_variants(X_all, bounds, param_space.parameter_names)
+    if violations:
+        n = len(violations)
+        plural = "s" if n > 1 else ""
+        console.print(
+            f"[red]Error: {n} variant/parameter cell{plural} violate "
+            "--params-file bounds:[/red]"
+        )
+        for vi, name, v, lb, ub in violations[:20]:
+            console.print(f"  [red]variant {vi}, {name} = {v:g} not in [{lb:g}, {ub:g}][/red]")
+        if n > 20:
+            console.print(f"  [red]... and {n - 20} more[/red]")
+        console.print(
+            "[red]Fix: widen the bounds in your --params-file (or omit "
+            "--params-file to use DEFAULT_SIM_DATA_PARAMETERS).[/red]"
+        )
+        raise typer.Exit(1)
 
     # ── Step 3: Execute ──
     if is_remote:
@@ -232,6 +353,7 @@ def sample(
             n_samples=n_samples,
             n_test=n_test,
             generations=generations,
+            max_duration=max_duration,
             observables=observables,
             generation_lower_bound=generation_lower_bound,
             X_train=X_train,
@@ -401,6 +523,7 @@ def _sample_remote(
             "seed": seed,
             "observable_columns": obs_names or [],
             "source": "sms-api",
+            "backend": "remote",
             "api_url": api_url,
             "simulator_id": simulator_id,
         },
@@ -454,10 +577,9 @@ def _sample_local(
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
     from libuq.sampling import PrecomputedCache
-    from uq.tui import (
+    from uq.vecoli_config import (
         _build_config,
         _build_variants_from_samples,
-        _collect_variant_timeseries,
         _count_completed_variants,
         _get_vecoli_root,
     )
@@ -617,7 +739,7 @@ def _sample_local(
         X=X_train,
         Y=Y_agg,
         parameter_names=param_space.parameter_names,
-        metadata={"bounds": bounds.tolist(), "seed": seed, "observable_columns": obs},
+        metadata={"bounds": bounds.tolist(), "seed": seed, "observable_columns": obs, "backend": "vecoli"},
         Y_timeseries=Y_ts,
         Y_timeseries_meta=Y_meta,
         X_test=X_test,
@@ -650,6 +772,7 @@ def _sample_v2ecoli(
     n_samples: int,
     n_test: int,
     generations: int,
+    max_duration: float,
     observables: list[str],
     generation_lower_bound: int,
     X_train: np.ndarray,
@@ -682,7 +805,7 @@ def _sample_v2ecoli(
         param_names=param_space.parameter_names,
         seed=seed,
         n_generations=generations,
-        max_time=10800.0,
+        max_time=max_duration,
         max_workers=max_workers,
         presets=observables,
     )
@@ -714,7 +837,7 @@ def _sample_v2ecoli(
         X=X_train,
         Y=Y_agg,
         parameter_names=param_space.parameter_names,
-        metadata={"bounds": bounds.tolist(), "seed": seed, "observable_columns": obs},
+        metadata={"bounds": bounds.tolist(), "seed": seed, "observable_columns": obs, "backend": "v2ecoli"},
         Y_timeseries=Y_ts,
         Y_timeseries_meta=Y_meta,
         X_test=X_test,
@@ -751,6 +874,14 @@ def quantify(
     polynomial_order: int = 2,
     regression: str = "lsq",
     tol: float = typer.Option(1e-3, help="BCS sparsity tolerance (UQPC --tol, only used when --regression=bcs)"),
+    bootstrap: int = typer.Option(
+        0,
+        "--bootstrap",
+        help="Number of bootstrap resamples for empirical 95% CIs on Sobol "
+        "indices (default 0 = off). Standard non-parametric bootstrap: "
+        "resample (X, Y) rows with replacement, refit PCE, recompute Sobol, "
+        "report 2.5–97.5 percentile interval per parameter. Typical: 200.",
+    ),
 ) -> None:
     """UQPC Steps 4-5: fit PCE surrogates, compute Sobol (all 4 strategies).
 
@@ -787,7 +918,7 @@ def quantify(
         )
         for cond_id, cond_result in mc_result.per_condition.items():
             console.print(f"\n[bold cyan]── Condition: {cond_id} ──[/bold cyan]")
-            _print_report(cond_result)
+            _print_report(cond_result, polynomial_order=polynomial_order)
         _print_multi_condition_report(mc_result)
         console.print(f"\n  [bold green]Artifacts exported to:[/bold green] {export_path}")
         # Generate HTML report for each condition
@@ -807,9 +938,10 @@ def quantify(
         regression=regression,
         tolerance=tol,
         export_path=export_path,
+        n_bootstrap=bootstrap,
     )
 
-    _print_report(result)
+    _print_report(result, polynomial_order=polynomial_order)
     _print_narrative(result)
     console.print(f"\n  [bold green]Artifacts exported to:[/bold green] {export_path}")
 
@@ -826,7 +958,7 @@ def _pct(v: float) -> str:
     return f"{v * 100:.1f}%"
 
 
-def _print_report(result: Any) -> None:
+def _print_report(result: Any, polynomial_order: int | None = None) -> None:
     """Render QuantifyResult as a rich terminal report."""
     from rich.columns import Columns
 
@@ -841,21 +973,36 @@ def _print_report(result: Any) -> None:
     console.print("[dim]  Refs: Macklin et al. Science 2020; Ahn-Horst et al. npj Syst Biol Appl 2022[/dim]")
     console.print()
 
+    # Design quality at the *actual* polynomial order used in this quantify run
+    # (the sample-time adequacy check assumes order=2; the user may have passed
+    # a different --polynomial-order here, which changes basis_size and κ(A)).
+    if polynomial_order is not None:
+        _print_quantify_adequacy_panel(result, polynomial_order)
+
     # Surrogate quality diagnostics (UQPC step 5)
     _print_relerr_panel(result.strategy1)
 
+    # Noise-floor decomposition (aleatoric vs epistemic variance) — uses
+    # vEcoli's lineage_seed replicate structure already in the cache.
+    noise = getattr(result, "noise_decomposition", None)
+    if noise is not None:
+        _print_noise_panel(noise)
+
     # Strategy 1: population
+    s1_ci = getattr(result.strategy1, "sobol_total_order_ci", None)
     _print_sobol_table(
         "STRATEGY 1 // POPULATION-AVERAGED (all cells, all times)",
         result.strategy1.sobol,
         "cyan",
+        total_ci=s1_ci,
     )
 
     # Strategy 2: by generation
     if result.strategy2:
         gen_tables = []
         for gen, r in sorted(result.strategy2.items()):
-            gen_tables.append(_sobol_table(f"Generation {gen}", r.sobol, "blue", n_top=3))
+            r_ci = getattr(r, "sobol_total_order_ci", None)
+            gen_tables.append(_sobol_table(f"Generation {gen}", r.sobol, "blue", n_top=3, total_ci=r_ci))
         console.print(
             Panel(
                 Columns(gen_tables, equal=True, expand=True),
@@ -871,7 +1018,8 @@ def _print_report(result: Any) -> None:
     if result.strategy3:
         seed_tables = []
         for seed, r in sorted(result.strategy3.items()):
-            seed_tables.append(_sobol_table(f"Seed {seed}", r.sobol, "yellow", n_top=3))
+            r_ci = getattr(r, "sobol_total_order_ci", None)
+            seed_tables.append(_sobol_table(f"Seed {seed}", r.sobol, "yellow", n_top=3, total_ci=r_ci))
         console.print(
             Panel(
                 Columns(seed_tables, equal=True, expand=True),
@@ -889,7 +1037,8 @@ def _print_report(result: Any) -> None:
         tables = []
         for i, r in enumerate(result.strategy4_per_stage):
             lo, hi = i / n, (i + 1) / n
-            tables.append(_sobol_table(f"θ {lo:.0%}–{hi:.0%}", r.sobol, "green", n_top=3))
+            r_ci = getattr(r, "sobol_total_order_ci", None)
+            tables.append(_sobol_table(f"θ {lo:.0%}–{hi:.0%}", r.sobol, "green", n_top=3, total_ci=r_ci))
         console.print(
             Panel(
                 Columns(tables, equal=True, expand=True),
@@ -902,7 +1051,10 @@ def _print_report(result: Any) -> None:
         )
 
 
-def _sobol_table(title: str, sobol: Any, border: str, n_top: int = 10) -> Table:
+def _sobol_table(
+    title: str, sobol: Any, border: str, n_top: int = 10,
+    total_ci: Any = None,
+) -> Table:
     table = Table(
         box=box.SIMPLE_HEAVY,
         show_header=True,
@@ -912,7 +1064,10 @@ def _sobol_table(title: str, sobol: Any, border: str, n_top: int = 10) -> Table:
         title_style=f"bold {border}",
     )
     table.add_column("PARAMETER", style="bold yellow", no_wrap=True)
-    table.add_column("S_Ti", style="bright_green", justify="right")
+    if total_ci is not None:
+        table.add_column("S_Ti  [95% CI]", style="bright_green", justify="right")
+    else:
+        table.add_column("S_Ti", style="bright_green", justify="right")
 
     total = sobol.total_order
     if total.ndim > 1:
@@ -920,12 +1075,21 @@ def _sobol_table(title: str, sobol: Any, border: str, n_top: int = 10) -> Table:
     ranked = np.argsort(total)[::-1][:n_top]
     for i in ranked:
         name = sobol.parameter_names[i] if i < len(sobol.parameter_names) else f"x{i}"
-        table.add_row(name, _pct(total[i]))
+        if total_ci is not None:
+            cell = f"{_pct(total[i])}  [{_pct(total_ci[i, 0])}, {_pct(total_ci[i, 1])}]"
+        else:
+            cell = _pct(total[i])
+        table.add_row(name, cell)
     return table
 
 
 def _print_relerr_panel(s1: Any) -> None:
-    """Show PCE surrogate relative errors (UQPC step 5 diagnostic)."""
+    """Show PCE surrogate relative errors (UQPC step 5 diagnostic).
+
+    Columns: TRAIN (always); TEST (when an independent held-out set is
+    in the cache); CV (k-fold cross-validation, when no test set —
+    typically BYO mode or default with --n-test 0).
+    """
     table = Table(
         box=box.SIMPLE_HEAVY,
         show_header=True,
@@ -935,17 +1099,29 @@ def _print_relerr_panel(s1: Any) -> None:
     )
     table.add_column("OBSERVABLE", style="bold yellow", justify="left")
     table.add_column("TRAIN", style="bright_green", justify="right")
-    if s1.relerr_test is not None:
+
+    test = s1.relerr_test
+    cv = getattr(s1, "relerr_cv", None)
+    cv_n_folds = getattr(s1, "cv_n_folds", 0)
+    if test is not None:
         table.add_column("TEST", style="bright_cyan", justify="right")
+    if cv is not None and len(cv) > 0:
+        table.add_column(f"CV ({cv_n_folds}-fold)", style="bright_cyan", justify="right")
 
     train = s1.relerr_train
-    test = s1.relerr_test
     n_out = len(train)
     for i in range(n_out):
         row = [f"output[{i}]", f"{train[i]:.3e}"]
         if test is not None:
             row.append(f"{test[i]:.3e}")
+        if cv is not None and len(cv) > 0:
+            row.append(f"{cv[i]:.3e}")
         table.add_row(*row)
+
+    subtitle = "[dim]||Y − Ŷ||₂ / ||Y||₂ per output column"
+    if test is None and (cv is None or len(cv) == 0):
+        subtitle += " — no test/CV (n_samples too small for held-out fold)"
+    subtitle += "[/dim]"
 
     console.print(
         Panel(
@@ -953,15 +1129,135 @@ def _print_relerr_panel(s1: Any) -> None:
             border_style="magenta",
             box=box.ROUNDED,
             padding=(0, 1),
-            subtitle="[dim]||Y − Ŷ||₂ / ||Y||₂ per output column[/dim]",
+            subtitle=subtitle,
         )
     )
 
 
-def _print_sobol_table(title: str, sobol: Any, border: str) -> None:
+def _print_quantify_adequacy_panel(result: Any, polynomial_order: int) -> None:
+    """PCE design quality at the actual quantify-time polynomial order.
+
+    Re-runs ``_pce_sample_adequacy`` and ``_design_matrix_conditioning`` on
+    the cached germ samples at the polynomial order the user actually passed
+    to ``uq quantify`` (which may differ from the order=2 default the
+    sample-time check assumed). Catches the case where ``--polynomial-order
+    3`` silently turns an ok design into an underdetermined one.
+    """
+    from uq.vecoli_config import (
+        _design_matrix_conditioning,
+        _pce_sample_adequacy,
+    )
+
+    germ = getattr(result.strategy1, "germ_train", None)
+    if germ is None or germ.ndim != 2:
+        return
+    n_samples, n_params = int(germ.shape[0]), int(germ.shape[1])
+
+    status, advisory = _pce_sample_adequacy(n_samples, n_params, polynomial_order)
+    if status == "underdetermined":
+        adequacy_line = f"[red]Count: {advisory}[/red]"
+    elif status == "marginal":
+        adequacy_line = f"[yellow]Count: {advisory}[/yellow]"
+    else:
+        adequacy_line = f"[dim]Count: {advisory}[/dim]"
+
+    if status == "underdetermined":
+        cond_line = "[dim]κ(A): skipped — count check already flagged the basis as larger than N.[/dim]"
+    else:
+        _kappa, cond_status, cond_advisory = _design_matrix_conditioning(
+            germ, n_params, polynomial_order,
+        )
+        if cond_status in ("ill-conditioned", "singular"):
+            cond_line = f"[red]κ(A): {cond_advisory}[/red]"
+        elif cond_status == "marginal":
+            cond_line = f"[yellow]κ(A): {cond_advisory}[/yellow]"
+        else:
+            cond_line = f"[dim]κ(A): {cond_advisory}[/dim]"
+
     console.print(
         Panel(
-            _sobol_table(title, sobol, border),
+            f"{adequacy_line}\n{cond_line}",
+            title=f"[bold magenta]DESIGN QUALITY @ order={polynomial_order}[/bold magenta]",
+            subtitle="[dim]Re-checked against the actual --polynomial-order used here[/dim]",
+            border_style="magenta",
+            box=box.ROUNDED,
+            padding=(0, 1),
+        )
+    )
+
+
+def _print_noise_panel(noise: Any) -> None:
+    """Aleatoric vs epistemic variance decomposition.
+
+    Uses vEcoli's lineage_seed replicate structure: each variant has
+    ``n_init_sims`` independent stochastic realizations; within-variant
+    variance across those is the noise floor. PCE Sobol indices measure
+    the *signal* portion — interpret them against the reported signal
+    fraction.
+    """
+    status = getattr(noise, "status", "estimated")
+
+    if status == "not_estimable_single_seed":
+        console.print(
+            Panel(
+                "[dim]Noise floor: not estimable — every variant has exactly "
+                "one lineage seed (n_init_sims = 1). Aleatoric / epistemic "
+                "separation requires ≥ 2 replicates per variant. "
+                "Rerun `uq sample` with `--n-init-sims 4` (or higher) to "
+                "estimate the noise floor honestly.[/dim]",
+                title="[bold magenta]NOISE FLOOR // ALEATORIC vs EPISTEMIC[/bold magenta]",
+                border_style="magenta",
+                box=box.ROUNDED,
+                padding=(0, 1),
+            )
+        )
+        return
+
+    signal = noise.per_output_signal_fraction
+    noise_frac = noise.per_output_noise_fraction
+    obs_names = getattr(noise, "observable_names", None) or [f"output[{j}]" for j in range(len(signal))]
+
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+        header_style="bold magenta",
+        title="NOISE FLOOR // ALEATORIC vs EPISTEMIC",
+        title_style="bold magenta",
+    )
+    table.add_column("OBSERVABLE", style="bold yellow", justify="left")
+    table.add_column("SIGNAL  η²_between", style="bright_green", justify="right")
+    table.add_column("NOISE  η²_within", style="bright_red", justify="right")
+
+    for name, s, nz in zip(obs_names, signal, noise_frac):
+        table.add_row(name, _pct(float(s)), _pct(float(nz)))
+
+    mean_signal = float(signal.mean())
+    if mean_signal >= 0.80:
+        verdict = f"[dim]Signal dominates ({mean_signal * 100:.0f}% mean) — Sobol indices interpret straightforwardly.[/dim]"
+    elif mean_signal >= 0.50:
+        verdict = f"[yellow]Moderate aleatoric contribution ({1 - mean_signal:.0%} mean noise) — Sobol indices undershoot the per-parameter share of the *explainable* variance by ~1/{mean_signal:.2f}×.[/yellow]"
+    else:
+        verdict = f"[red]Aleatoric exceeds parameter signal ({1 - mean_signal:.0%} mean noise) — Sobol indices measure {mean_signal:.0%} of total variance only; interpret against the shrunken explainable variance.[/red]"
+
+    extra = ""
+    if status == "unbalanced":
+        extra = "  [dim](unbalanced design: replicate counts vary across variants)[/dim]"
+
+    console.print(
+        Panel(
+            table,
+            border_style="magenta",
+            box=box.ROUNDED,
+            padding=(0, 1),
+            subtitle=f"{verdict}{extra}",
+        )
+    )
+
+
+def _print_sobol_table(title: str, sobol: Any, border: str, total_ci: Any = None) -> None:
+    console.print(
+        Panel(
+            _sobol_table(title, sobol, border, total_ci=total_ci),
             border_style=border,
             box=box.ROUNDED,
             padding=(0, 1),
@@ -1184,7 +1480,7 @@ def show_config(
 
     from libuq.pipeline.models import SimDataParameter
     from libuq.pipeline.param_loader import ParameterDataset
-    from uq.tui import _build_config, _build_variants_from_samples
+    from uq.vecoli_config import _build_config, _build_variants_from_samples
     from uq.workflow import _setup_input_pc
 
     sim_data_path = str(Path(sim_data_path).resolve())
@@ -1635,6 +1931,112 @@ def fetch(
             "\n  [yellow]All TSVs are empty (headers only). This usually means "
             "generation_lower_bound filtered out all data. Check that the simulation "
             "ran enough generations.[/yellow]"
+        )
+
+
+@app.command(name="plan")
+def plan(
+    budget: int = typer.Option(
+        ...,
+        "--budget",
+        help="Total vEcoli runs available (n_samples × n_init_sims × generations).",
+    ),
+    n_params: int = typer.Option(
+        6,
+        "--params",
+        help="PCE input dimension. Default 6 (DEFAULT_SIM_DATA_PARAMETERS).",
+    ),
+    polynomial_order: int = typer.Option(
+        2,
+        "--polynomial-order",
+        help="PCE order at quantify time. Default 2.",
+    ),
+    noise_replicates: int = typer.Option(
+        4,
+        "--noise-replicates",
+        help="Minimum n_init_sims required to estimate the noise floor "
+        "(Triage 5 / Gap 2). Default 4.",
+    ),
+    generations: int = typer.Option(
+        4,
+        "--generations",
+        help="Generations per variant for cell-cycle coverage. Default 4.",
+    ),
+) -> None:
+    """Recommend (n_samples, n_init_sims, generations) for a compute budget.
+
+    \b
+    Holds noise_replicates and generations fixed and derives n_samples
+    from the budget; reports PCE adequacy at the requested polynomial
+    order plus alternatives showing the trade-off (halve generations,
+    drop replicates to 1). Use before `uq sample` to size a run.
+    """
+    from uq.vecoli_config import _recommend_compute_allocation
+
+    candidates = _recommend_compute_allocation(
+        budget=budget,
+        n_params=n_params,
+        polynomial_order=polynomial_order,
+        min_replicates=noise_replicates,
+        generations=generations,
+    )
+
+    console.print(
+        f"[bold cyan]Budget:[/bold cyan] {budget} vEcoli runs   "
+        f"[dim]·[/dim]   d={n_params}, p={polynomial_order}, "
+        f"basis_size={candidates[0].basis_size}"
+    )
+
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+        header_style="bold magenta",
+        title="COMPUTE ALLOCATION OPTIONS",
+        title_style="bold magenta",
+    )
+    table.add_column("OPTION", style="bold yellow")
+    table.add_column("n_samples", justify="right")
+    table.add_column("n_init_sims", justify="right")
+    table.add_column("generations", justify="right")
+    table.add_column("ratio (N/B)", justify="right")
+    table.add_column("status", justify="left")
+    table.add_column("noise floor?", justify="left")
+
+    for c in candidates:
+        if c.adequacy_status == "underdetermined":
+            status_cell = f"[red]{c.adequacy_status}[/red]"
+        elif c.adequacy_status == "marginal":
+            status_cell = f"[yellow]{c.adequacy_status}[/yellow]"
+        else:
+            status_cell = f"[green]{c.adequacy_status}[/green]"
+        noise_cell = "[green]yes[/green]" if c.noise_estimable else "[red]no (n=1)[/red]"
+        table.add_row(
+            c.label,
+            str(c.n_samples),
+            str(c.n_init_sims),
+            str(c.generations),
+            f"{c.adequacy_ratio:.2f}×",
+            status_cell,
+            noise_cell,
+        )
+
+    console.print(Panel(table, border_style="magenta", box=box.ROUNDED, padding=(0, 1)))
+
+    rec = candidates[0]
+    if rec.adequacy_status == "underdetermined":
+        console.print(
+            f"  [red]Recommended config is underdetermined.[/red] Either "
+            "raise --budget, drop --polynomial-order, or use --regression bcs."
+        )
+    elif rec.adequacy_status == "marginal":
+        console.print(
+            f"  [yellow]Recommended config is marginal[/yellow] — PCE will fit "
+            "but Sobol indices will be noisy. Consider raising budget."
+        )
+    if not rec.noise_estimable:
+        console.print(
+            "  [red]Recommended config has only 1 replicate — noise floor "
+            "(Gap 2) will not be estimable.[/red]"
         )
 
 
