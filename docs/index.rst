@@ -102,6 +102,16 @@ Documentation contents
    cell_cycle
 
 .. toctree::
+   :maxdepth: 2
+   :caption: UQ-Backed Inference (Layer B & C)
+
+   inference_methodology
+   inference_uq_integration
+   inference_design_rationale
+   inference_tutorial
+   api/inference
+
+.. toctree::
    :maxdepth: 1
    :caption: Development
 

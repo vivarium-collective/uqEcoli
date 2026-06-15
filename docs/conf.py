@@ -8,6 +8,8 @@ import sys
 
 # Add the parent directory to the path so Sphinx can find the uq package
 sys.path.insert(0, os.path.abspath("../.."))
+# Add the repo root so autodoc can import the (real) ``inference`` package.
+sys.path.insert(0, os.path.abspath(".."))
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
@@ -42,6 +44,12 @@ autodoc_mock_imports = [
     "libuq",
     "uq",
     "v2ecoli",
+    # Inference (Layer B/C) heavy deps — imported lazily inside methods, mocked
+    # here so autodoc can parse the ``inference`` package without importing them.
+    "ezyrb",
+    "sbi",
+    "torch",
+    "emcee",
 ]
 
 # -- General configuration ---------------------------------------------------
@@ -69,7 +77,7 @@ napoleon_include_special_with_doc = True
 napoleon_use_admonition_for_examples = True
 napoleon_use_admonition_for_notes = True
 napoleon_use_admonition_for_references = True
-napoleon_use_ivar = False
+napoleon_use_ivar = True
 napoleon_use_param = True
 napoleon_use_rtype = True
 napoleon_type_aliases = None
