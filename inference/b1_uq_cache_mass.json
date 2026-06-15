@@ -1,0 +1,54 @@
+{
+  "global_mean": {
+    "per_col": [
+      0.3367502895834264,
+      0.35133317568647165,
+      0.35133317568647165,
+      0.5449895871152313
+    ],
+    "overall": 0.39610155701790023
+  },
+  "nearest_X": {
+    "per_col": [
+      0.2481266071994203,
+      0.2598041759542121,
+      0.2598041759542121,
+      0.6329044158013692
+    ],
+    "overall": 0.3501598437273035
+  },
+  "parametric_dmd": {
+    "per_col": [
+      0.06914582638522519,
+      0.06967799942702627,
+      0.06967799942702448,
+      0.634352517386564
+    ],
+    "overall": 0.21071358565645998,
+    "n_diverged": 0
+  },
+  "_coverage": {
+    "nominal": 0.9,
+    "realized": 0.9
+  },
+  "_cols": [
+    "listeners__mass__dry_mass",
+    "listeners__mass__cell_mass",
+    "listeners__mass__volume",
+    "listeners__mass__growth"
+  ],
+  "_n_samples": 20,
+  "_n_phase": 256,
+  "_n_features": 4,
+  "_duration_range": [
+    1118,
+    2158
+  ],
+  "_config": {
+    "pod_rank": 3,
+    "dmd_rank": 3,
+    "real_eig_limit": 10.0,
+    "num_trials": 0,
+    "interpolator": "rbf"
+  }
+}
