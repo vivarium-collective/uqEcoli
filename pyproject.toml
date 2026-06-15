@@ -7,6 +7,8 @@ requires-python = "==3.12.12"
 readme = "README.md"
 dependencies = [
     "duckdb>=1.5.0",
+    "emcee>=3.1.6",
+    "ezyrb>=1.3.3",
     "ipykernel>=7.2.0",
     "kaleido>=1.2.0",
     "plotly>=6.6.0",
@@ -14,9 +16,11 @@ dependencies = [
     "process-bigraph>=1.0.6",
     "pydmd>=2025.8.1",
     "python-dotenv>=1.2.2",
+    "pyttsx3>=2.99",
     "pytuq[all]>=1.0.0",
     "ray[data,train,tune]>=2.55.0",
     "salib>=1.5.2",
+    "sbi>=0.26.1",
     "scipy-stubs>=1.17.1.2",
     "setuptools>=82.0.1",
     "sobol>=0.9",
@@ -26,6 +30,9 @@ dependencies = [
     "v2ecoli",
     "vecoli",
     "vl-convert-python>=1.9.0.post1",
+    "xarray>=2026.4",
+    "zarr>=3.1.6",
+    "zarrs>=0.2",
 ]
 
 [project.scripts]
@@ -38,7 +45,8 @@ include = [
     "apollo",
     "pbg_uqEcoli",
     "tests",
-    "flow"
+    "flow",
+    "inference"
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -47,7 +55,8 @@ include = [
     "apollo",
     "pbg_uqEcoli",
     "tests",
-    "flow"
+    "flow",
+    "inference"
 ]
 
 [build-system]
@@ -121,8 +130,8 @@ constraint-dependencies = [
 ]
 
 [tool.uv.sources]
-vecoli = { path = "../vEcoli", editable = true }
-v2ecoli = { path = "../v2ecoli", editable = true }
+vecoli = { path = "../vEcoli-private", editable = true }
+v2ecoli = { path = "../../vivarium-app/v2ecoli", editable = true }
 
 # ortools 9.10 lacks cp313 wheels; vecoli pins it transitively.
 # Override to a version that ships Python 3.13 wheels.
