@@ -1,5 +1,15 @@
 # uqEcoli
 
+> # ⚠️ DEPRECATED
+>
+> **`uqEcoli` is deprecated and no longer under active development.**
+>
+> Its forward-UQ capability now lives in **[`vivarium-collective/viva-uq`](https://github.com/vivarium-collective/viva-uq)** (the portable pbg-uq / `pbg_uq` package), and the UQ *demonstrations* — including the strain-design (GFP new-gene) sensitivity analysis with the aggregation-strategy 1–3 decomposition (the M8/08.4.2 milestone deliverable) — are built natively in **v2ecoli's `parameter-uq` investigation** (study `param-uq-05-strain-design`).
+>
+> **Why:** `viva-uq` + v2ecoli's native pbg-uq path runs in-process against the v2ecoli composite (no standalone vEcoli-backend glue, no separate venv), reaches the public `new_gene_internal_shift` strain-design knob directly, and is publishable. This repo's PyTUQ-glue approach is superseded.
+>
+> **Migrating?** Use `viva-uq` for the pipeline and `/viva-study` in the v2ecoli workspace to author UQ studies. This repo remains readable for reference; no new work should land here.
+
 [![Documentation Status](https://readthedocs.org/projects/uqecoli/badge/?version=latest)](https://uqecoli.readthedocs.io/en/latest/)
 [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](https://vivarium-collective.github.io/uqEcoli/demo/)
 
