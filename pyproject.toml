@@ -23,6 +23,7 @@ dependencies = [
     "textual>=8.2.1",
     "typer>=0.24.1",
     "uqpy>=4.1.6",
+    "v2ecoli",
     "vecoli",
     "vl-convert-python>=1.9.0.post1",
 ]
@@ -35,6 +36,7 @@ uq = "uq.cli:main"
 include = [
     "uq",
     "apollo",
+    "pbg_uqEcoli",
     "tests",
     "flow"
 ]
@@ -43,6 +45,7 @@ include = [
 include = [
     "uq",
     "apollo",
+    "pbg_uqEcoli",
     "tests",
     "flow"
 ]
@@ -119,6 +122,7 @@ constraint-dependencies = [
 
 [tool.uv.sources]
 vecoli = { path = "../vEcoli", editable = true }
+v2ecoli = { path = "../v2ecoli", editable = true }
 
 # ortools 9.10 lacks cp313 wheels; vecoli pins it transitively.
 # Override to a version that ships Python 3.13 wheels.

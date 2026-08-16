@@ -15,6 +15,7 @@ import hashlib
 import json
 import pickle
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
@@ -86,10 +87,21 @@ class SimulationWrapper:
         """
         Initialize the simulation wrapper.
 
+        .. deprecated::
+           Use ``V2ecoliGenerator`` from ``uq.generators.v2ecoli`` or
+           ``--backend v2ecoli`` instead.  This class is kept for backward
+           compatibility but is no longer actively developed.
+
         Args:
             config: Wrapper configuration
             parameter_space: Definition of the input parameter space
         """
+        warnings.warn(
+            "SimulationWrapper is deprecated. "
+            "Use ``uq.generators.v2ecoli.V2ecoliGenerator`` with ``--backend v2ecoli`` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.config = config
         self.parameter_space = parameter_space
 

@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.abspath("../.."))
 project = "vEcoli UQ Framework"
 copyright = "2026, vEcoli Team"
 author = "Alex Patrie"
-release = "0.1.0"
-version = "0.1.0"
+release = "0.3.0"
+version = "0.3.0"
 
 # -- Mock imports for ReadTheDocs builds ------------------------------------
 # RTD doesn't have vEcoli, PyTUQ, or other heavy dependencies installed.
@@ -41,6 +41,7 @@ autodoc_mock_imports = [
     "marimo",
     "libuq",
     "uq",
+    "v2ecoli",
 ]
 
 # -- General configuration ---------------------------------------------------

@@ -9,10 +9,8 @@ ANSI-only colors via ``textual-ansi`` theme — adapts to any terminal.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import pickle
 import subprocess
 import sys
 import threading
@@ -20,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import polars as pl
 from rich.syntax import Syntax
 from rich.text import Text
 from textual import work
@@ -91,158 +88,16 @@ def _json_markup(data: Any) -> Syntax:
     )
 
 
-# ── vEcoli helpers (self-contained, no TimeseriesGeneratorVecoli) ────
-
-
-def _get_vecoli_root() -> str:
-    import ecoli  # type: ignore[import-not-found]
-
-    root = Path(ecoli.__file__).resolve().parent.parent
-    if (root / "configs" / "__init__.py").exists():
-        return str(root)
-    raise RuntimeError("Cannot find vEcoli repo root")
-
-
-def _build_config(
-    sim_data_path: str,
-    output_dir: str,
-    variants_section: dict[str, Any],
-    experiment_id: str = "uqpc_batch",
-    n_init_sims: int = 1,
-    generations: int = 1,
-    max_duration: float = 10800.0,
-    base_config_path: str | None = None,
-    conditions: list[str] | None = None,
-) -> dict[str, Any]:
-    """Build a vEcoli workflow config JSON.
-
-    Args:
-        base_config_path: Optional path to a base vEcoli config to merge with.
-            Preserves ``parca_variants``, ``analysis_options``, and other
-            multi-parca keys from the base config.
-        conditions: Optional list of ``rnaseq_basal_dataset_id`` strings.
-            When provided, populates ``parca_variants`` for multi-parca
-            cross-condition UQ.
-    """
-    if base_config_path:
-        base = json.loads(Path(base_config_path).read_text())
-    else:
-        base = {}
-
-    # UQ fields override base; everything else preserved
-    base.update({
-        "sim_data_path": sim_data_path,
-        "experiment_id": experiment_id,
-        "emitter": "parquet",
-        "emitter_arg": {
-            "out_dir": output_dir,
-        },
-        "max_duration": max_duration,
-        "n_init_sims": n_init_sims,
-        "generations": generations,
-        "single_daughters": True,
-        "suffix_time": False,
-        "variants": variants_section,
-    })
-
-    # Multi-condition: populate parca_variants
-    if conditions:
-        base["parca_variants"] = [
-            {"rnaseq_basal_dataset_id": cond_id}
-            for cond_id in conditions
-        ]
-
-    return base
-
-
-def _build_variants_from_samples(
-    X: np.ndarray,
-    param_specs: list[SimDataParameter],
-) -> dict[str, Any]:
-    """Encode N germ samples as sim_data_setattr variants."""
-    mutations_list = []
-    for i in range(X.shape[0]):
-        mutations = {}
-        for j, spec in enumerate(param_specs):
-            val = float(X[i, j])
-            if hasattr(spec, "index") and spec.index is not None:
-                mutations[spec.attr_path] = {"__index__": spec.index, "__value__": val}
-            else:
-                mutations[spec.attr_path] = val  # type: ignore[assignment]
-        mutations_list.append(mutations)
-    return {"sim_data_setattr": {"mutations": {"value": mutations_list}}}
-
-
-def _count_completed_variants(history_base: Path, _n_expected: int = 0) -> int:
-    """Count how many variant directories have Parquet files.
-
-    Handles vEcoli's hive-partitioned output structure:
-    history/experiment_id=X/variant=N/lineage_seed=S/generation=G/agent_id=A/NNN.pq
-    """
-    if not history_base.exists():
-        return 0
-    # Glob for all variant=N directories under any experiment_id= partition
-    found_variants: set[int] = set()
-    for pq in history_base.rglob("*.pq"):
-        for part in pq.parts:
-            if part.startswith("variant="):
-                with contextlib.suppress(ValueError):
-                    found_variants.add(int(part.split("=")[1]))
-                break
-    return len(found_variants)
-
-
-def _collect_variant_timeseries(
-    history_base: Path,
-    n_samples: int,
-    obs_columns: list[str],
-) -> tuple[np.ndarray, list[np.ndarray], list[dict[str, np.ndarray]]]:
-    """Read hive-partitioned Parquet and extract per-variant arrays."""
-    pq_files = list(history_base.rglob("*.pq"))
-    if not pq_files:
-        pq_files = list(history_base.rglob("*.parquet"))
-    if not pq_files:
-        raise FileNotFoundError(f"No Parquet files under {history_base}")
-
-    df = pl.read_parquet([str(p) for p in pq_files], hive_partitioning=True)
-
-    available = [c for c in obs_columns if c in df.columns]
-    if not available:
-        raise ValueError(f"None of {obs_columns} found in {df.columns[:20]}")
-
-    sort_cols = [c for c in ["variant", "lineage_seed", "generation", "time"] if c in df.columns]
-    if sort_cols:
-        df = df.sort(sort_cols)
-
-    baseline_df = df.filter(pl.col("variant") == 0) if "variant" in df.columns else None
-
-    Y_list, Y_ts, Y_meta = [], [], []
-    for i in range(n_samples):
-        vidx = i + 1
-        if "variant" in df.columns:
-            sdf = df.filter(pl.col("variant") == vidx)
-            if sdf.height == 0:
-                sdf = df.filter(pl.col("variant") == i)
-            if sdf.height == 0 and baseline_df is not None:
-                sdf = baseline_df
-        else:
-            sdf = df
-
-        obs_df = sdf.select(available).fill_null(0.0)
-        ts = obs_df.to_numpy().astype(np.float64)
-        Y_ts.append(ts)
-        Y_list.append(ts.mean(axis=0))
-
-        meta: dict[str, np.ndarray] = {}
-        if "generation" in sdf.columns:
-            meta["generation"] = sdf["generation"].fill_null(0).to_numpy().astype(np.int64)
-        if "lineage_seed" in sdf.columns:
-            meta["lineage_seed"] = sdf["lineage_seed"].fill_null(0).to_numpy().astype(np.int64)
-        Y_meta.append(meta)
-
-    Y_agg = np.vstack(Y_list)
-    has_meta = Y_meta and any(m for m in Y_meta)
-    return Y_agg, Y_ts, Y_meta if has_meta else None  # type: ignore[return-value]
+# vEcoli workflow-config helpers live in uq/vecoli_config.py (CLI-owned).
+# The TUI consumes them; no re-export — new callers should import from
+# uq.vecoli_config directly.
+from uq.vecoli_config import (
+    _build_config,
+    _build_variants_from_samples,
+    _collect_variant_timeseries,
+    _count_completed_variants,
+    _get_vecoli_root,
+)
 
 
 # ── Modal ────────────────────────────────────────────────────────────

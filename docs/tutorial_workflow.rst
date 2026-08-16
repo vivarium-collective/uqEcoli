@@ -66,8 +66,8 @@ and only one vEcoli workflow invocation per ``uq sample`` call.
    PyTUQ is the single source of truth for sampling.  There is no
    hand-rolled LHS, Monte Carlo, or quadrature code inside ``uqEcoli``.
 
-Step 3 — evaluate vEcoli  [``uq/cli.py::sample`` + ``sim_data_setattr``]
-------------------------------------------------------------------------
+Step 3 — evaluate the simulation  [``uq/cli.py::sample``]
+----------------------------------------------------------
 
 Each row of :math:`X` is translated into one *variant* using vEcoli's
 ``sim_data_setattr`` variant function:
@@ -124,6 +124,76 @@ parameter).
 
 The time-averaged observable vector becomes one row of :math:`Y`; the
 raw timeseries is kept under ``timeseries/`` for strategies 2-4.
+
+**Bring-your-own-variants (``--variants-source base-config``)**
+
+The default contract — one PCRV sample row ↔ one ``sim_data_setattr``
+variant — can be inverted.  If you already have a vEcoli config JSON
+with a fully-spec'd ``variants`` block (e.g. a previously-curated sweep,
+a multi-condition design, a hand-picked kinetic-feature scan), pass it
+with ``--variants-source base-config --base-config <PATH>`` and:
+
+1. PCRV sampling is skipped entirely (no ``sampleGerm`` / ``evalPC``).
+2. ``uq.vecoli_config._x_from_variants()`` reverse-maps mutation values
+   into :math:`X` row-by-row, column-ordered by ``--params-file``'s
+   ``attr_path`` list.  The germ matrix :math:`\Xi` is then derived via
+   the affine inverse of step 1's map.
+3. :math:`N_{\text{samples}}` is **forced** to the length of the
+   variants list.  ``--n-test`` is ignored (no validation surface
+   without PCRV draws).
+
+Because :math:`N` is now constrained by the user's variants count
+rather than chosen for PCE basis-size needs, ``uq sample`` prints a
+**PCE adequacy diagnostic** (red/yellow/dim) based on
+:math:`N_{\text{samples}} / \binom{p+d}{d}` at the default
+``--polynomial-order 2`` quantify setting.  The advisory tells you
+exactly how many more variants to add, what order to drop to, or
+whether ``--regression bcs`` is the better fit.
+
+BYO mode is local-only: forbidden with ``--backend v2ecoli`` and with
+``--api-url`` (remote mutation pushdown is unfinished).  The variants
+block must use ``sim_data_setattr`` — other modules cannot be
+reverse-mapped to scalar :math:`X` values and the cache will be
+incompatible with ``uq quantify``.
+
+**v2ecoli backend (``--backend v2ecoli``)**
+
+An alternative in-process backend uses the ``v2ecoli`` process-bigraph
+composite instead of the subprocess + Nextflow orchestration.  The steps
+differ in execution but produce the same ``PrecomputedCache`` format:
+
+1. **Cache bundle generation** — ``generate_cache_bundle()`` extracts the
+   initial state and sim_data from ``simData.cPickle`` into
+   ``cache_dir/{initial_state.json, sim_data_cache.dill}``.
+2. **Mutation** — each sample's parameter values are applied in-memory
+   via ``apply_mutations_to_configs()``, which deep-copies the baseline
+   ``configs`` dict and updates the specified sim_data dot-paths.
+3. **Composite build** — ``build_v2ecoli_composite()`` constructs a
+   v2ecoli ``Composite`` with listeners for the requested observable
+   presets (MassListener, RNACounts, MonomerCounts, FBA results, etc.).
+4. **Tick loop** — ``run_v2ecoli_composite()`` advances the composite
+   for ``N_generations * ticks_per_generation`` steps.
+5. **Observable extraction** — ``extract_timeseries()`` traverses
+   ``composite.state['agents']`` directly using the path maps in
+   :py:mod:`uq.v2ecoli_bridge` (``OBSERVABLE_PATHS`` for scalars,
+   ``ARRAY_OBSERVABLE_PATHS`` for arrays like transcriptome/proteome).
+
+Parallelism is managed via ``ProcessPoolExecutor`` (controlled by
+``--max-workers``), unlike the Nextflow-managed vEcoli backend.
+
+The `v2ecoli` preset table maps v2ecoli listeners to UQ observables:
+
+.. code-block:: text
+
+   mass            → MassListener (cell mass, volume, DNA/RNA fractions)
+   higher_order    → derived from mass (doubling time, growth rate)
+   transcriptome   → RNACounts listener
+   proteome        → MonomerCounts listener
+   fluxome         → FBA results (dry-mass normalized)
+   exchange_fluxes → FBA results (external metabolite fluxes)
+
+Array observables (transcriptome, proteome, fluxome, exchange_fluxes)
+are flattened to ``{preset}_{index}`` column names at extraction time.
 
 Step 4 — PCE surrogate fit  [``_fit_surrogate``]
 ------------------------------------------------
@@ -208,6 +278,82 @@ multi-output models we variance-weight across outputs:
 so the final ``first_order`` / ``total_order`` vectors are single
 numbers per parameter that can be rendered as bar charts.
 
+Step 6b — bootstrap Sobol CIs  [``_bootstrap_sobol_cis``]
+---------------------------------------------------------
+
+Single-fit Sobol indices are point estimates with no uncertainty
+quantification.  ``S_{T_i} = 0.42`` for one parameter and
+``S_{T_i} = 0.38`` for another could be a real ranking or it could be
+fit noise — without CIs the user cannot tell.
+
+``--bootstrap N`` on ``uq quantify`` runs the standard non-parametric
+bootstrap (Archer/Iooss/Saltelli convention) on top of steps 4–6:
+
+.. code-block:: text
+
+   for b in range(N):
+       idx = sample n_samples row indices with replacement
+       refit PCE on (germ[idx], Y[idx]) via the same regression backend
+       recompute Sobol via PCRV.computeSens / computeTotSens
+   report per-parameter 2.5–97.5 percentile interval
+
+This is method-agnostic — works identically with ``lsq``, ``bcs``, and
+``anl`` regression.  Threaded through all four RFC006 strategies via
+the ``n_bootstrap`` parameter on ``run_uqpc``.  Sobol tables grow from
+``S_Ti`` to ``S_Ti  [low, high]``.  Typical N = 200 (sub-second for
+moderate output dimensions).
+
+Step 6c — surrogate quality and noise floor diagnostics
+--------------------------------------------------------
+
+Three additional panels surface what raw Sobol numbers can hide.
+
+**Design quality at the actual order** —
+``_print_quantify_adequacy_panel`` re-runs the count adequacy +
+condition-number checks at the ``--polynomial-order`` actually used in
+the current ``quantify`` run.  The sample-time check assumed order 2;
+if the user passes ``--polynomial-order 3`` the basis size jumps from
+:math:`\binom{8}{6} = 28` to :math:`\binom{9}{6} = 84` and an ok design
+at p=2 can become underdetermined silently.  Status:
+``ok`` / ``marginal`` / ``underdetermined`` for the count check;
+``well-conditioned`` / ``marginal`` / ``ill-conditioned`` / ``singular``
+for the κ(A) check.
+
+**Cross-validation when no held-out test set is available** —
+``_k_fold_cv_error`` runs 5-fold CV using the same PyTUQ regression
+backends as the main fit.  Replaces ``--n-test`` validation in BYO
+mode or under ``--n-test 0``.  Cell ``CV (5-fold)`` appears in the
+``SURROGATE QUALITY`` panel.  Skip threshold:
+:math:`N \ge 2.5 \cdot \text{basis\_size}` — under that, each fold's
+training set is itself under-fit and the CV error is just noise.
+
+**Aleatoric vs epistemic decomposition** —
+``_aleatoric_noise_decomposition`` uses vEcoli's ``lineage_seed``
+replicate structure already in the cache to split total :math:`Y`
+variance into:
+
+.. math::
+
+   \mathrm{Var}[Y]_{\text{total}}
+     = \underbrace{\mathrm{Var}_i\!\left[\bar Y_i\right]}_{\text{between-variant: epistemic}}
+     + \underbrace{\mathrm{E}_i\!\left[\mathrm{Var}_k\!\left[Y_{i,k}\right]\right]}_{\text{within-variant: aleatoric}}
+
+where :math:`Y_{i,k}` is the per-seed mean for variant :math:`i`,
+replicate :math:`k`, and :math:`\bar Y_i` is the variant grand mean.
+Signal fraction :math:`\eta^2_{\text{between}} = V_{\text{between}} /
+V_{\text{total}}` reports the share of variance the PCE could possibly
+explain.  Color-coded verdict:
+
+* ≥ 80%: signal dominates — interpret Sobol straightforwardly
+* 50–80%: moderate aleatoric — Sobol undershoots the per-parameter
+  share of *explainable* variance by ~ :math:`1/\eta^2\times`
+* < 50%: aleatoric exceeds parameter signal
+
+When ``n_init_sims = 1`` (the default), the panel reports
+``not estimable`` with an advisory to rerun ``uq sample`` with
+``--n-init-sims 4`` (the recommended minimum for noise-floor
+estimation).
+
 Aggregation strategies (RFC006 §3)
 ----------------------------------
 
@@ -252,8 +398,10 @@ Splitting the workflow at the cache boundary means you can:
 * Rebuild the dashboard/TUI artifacts from the same cache.
 
 And you can ship the cache to another machine that does not have vEcoli
-installed — ``quantify`` only needs ``simData.cPickle`` to reconstruct
-the parameter space metadata.
+or v2ecoli installed — ``quantify`` only needs ``simData.cPickle`` to
+reconstruct the parameter space metadata, and is **backend-agnostic**
+(it reads the same ``PrecomputedCache`` format regardless of whether
+samples were generated by ``--backend vecoli`` or ``--backend v2ecoli``).
 
 Reading the export directory
 ----------------------------

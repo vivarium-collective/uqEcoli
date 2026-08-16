@@ -1,26 +1,37 @@
 Getting Started
 ===============
 
-This guide walks through the shortest path from "I have vEcoli and a
-``simData.cPickle``" to "I have PCE Sobol indices for five sim_data
-parameters."
+This guide walks through the shortest path from "I have a simulation
+and a ``simData.cPickle``" to "I have PCE Sobol indices for five
+sim_data parameters."
 
 Prerequisites
 -------------
 
-1. A working **vEcoli** checkout at ``../vEcoli`` (editable install).
-2. A pre-computed ``simData.cPickle`` produced by vEcoli's Parca
-   (for example ``../vEcoli/reconstruction/sim_data/kb/simData.cPickle``).
-3. ``uv`` installed (https://docs.astral.sh/uv/).
+The repository supports two simulation backends:
+
+**vEcoli backend** (``--backend vecoli``, default)
+   1. A working **vEcoli** checkout at ``../vEcoli`` (editable install).
+   2. A pre-computed ``simData.cPickle`` produced by vEcoli's Parca
+      (for example ``../vEcoli/reconstruction/sim_data/kb/simData.cPickle``).
+
+**v2ecoli backend** (``--backend v2ecoli``, preferred)
+   1. A working **v2ecoli** checkout at ``../v2ecoli`` (editable install).
+   2. A pre-computed ``simData.cPickle`` (same format; v2ecoli converts
+      it to a cache bundle at runtime).
+
+Both backends share the same ``simData.cPickle`` format and the same
+``uq quantify`` / ``uq report`` pipeline — only the execution engine
+differs.
 
 .. code-block:: bash
 
    git clone https://github.com/.../uqEcoli.git
    cd uqEcoli
-   uv sync --all-groups --all-extras
+   uv sync --all-extras
 
-This repository depends on vEcoli as an editable package, so no further
-installation of vEcoli is needed as long as the path above is correct.
+This repository depends on vEcoli (and optionally v2ecoli) as editable
+packages installed alongside it.
 
 The two-stage workflow
 ----------------------
@@ -33,6 +44,38 @@ The two-stage workflow
   Sobol indices for all four RFC006 aggregation strategies, report
   surrogate relative errors, and export a dashboard-ready artifact
   directory.
+
+Two axes of variation — pick the right mode
+-------------------------------------------
+
+Before reaching for a CLI flag, decide which axis you're varying.
+``sim_data`` can be mutated along two mathematically distinct axes:
+
+* **UQ axis** :math:`P_{uq}` — *continuous* parameters with a known
+  prior (uniform on a bounded interval).  PCRV samples them; PCE
+  decomposes ``Var[Y]`` across them via Sobol.  Declared via
+  ``--params-file``.
+* **Design axis** :math:`P_{design}` — *categorical / structural*
+  perturbations (knockouts on/off, environment swaps, timeline events
+  at fixed boundaries).  No continuous interval; PCE cannot decompose
+  variance across this axis.  Handled via per-condition PCE +
+  cross-condition Sobol comparison.  Declared via ``--design-config``
+  (variant-level) or ``--conditions`` (parca-level).
+
+When both axes are present, the framework runs an :math:`M \times N`
+grid: M design conditions, each with N PCRV samples reused across
+conditions for paired comparison.  **The two parameter sets must be
+disjoint at the attr_path level** for PCE Sobol to be sound — if they
+overlap, ``sim_data_setattr`` silently overwrites the design's value
+and the per-condition Sobol indices answer the wrong question.  The CLI
+surfaces this overlap before any compute is committed.
+
+See :doc:`cli_reference` § "Two axes of variation: design conditions ×
+UQ samples" for the full decision table, the collapse rule (when
+:math:`P_{design} = P_{uq}`, use single-layer ``--variants-source
+base-config`` or default mode instead of two-layer ``--design-config``),
+and the subtle case where finely-spaced designs should be folded into
+the UQ layer for cheaper, cleaner Sobol.
 
 Stage 1 — sample
 ^^^^^^^^^^^^^^^^
@@ -79,7 +122,8 @@ Stage 2 — quantify
        --cache-dir ./uq_cache \
        --export-path ./uq_results \
        --polynomial-order 3 \
-       --regression lsq
+       --regression lsq \
+       --bootstrap 200
 
 What happens:
 
@@ -91,11 +135,90 @@ What happens:
    the PCE coefficients via ``PCRV.computeSens``/``computeTotSens``
    (Sudret 2008).
 4. Relative training errors (and test errors if ``X_test``/``Y_test``
-   are in the cache) are computed per output and displayed in the Rich
-   report.
-5. A ``QuantifyResult`` is exported to ``./uq_results/`` as a dashboard
+   are in the cache; otherwise a 5-fold CV column) are computed per
+   output and displayed in the Rich report.
+5. With ``--bootstrap 200``, empirical 95% CIs on Sobol indices are
+   computed (non-parametric bootstrap: resample rows → refit PCE →
+   recompute Sobol → percentile interval).  Sobol tables grow from
+   ``S_Ti`` to ``S_Ti  [low, high]``.
+6. A ``DESIGN QUALITY`` panel re-runs the count + κ(A) check at the
+   actual ``--polynomial-order`` used here (catches the case where
+   ``polynomial-order 3`` silently turned an ok design underdetermined).
+7. A ``NOISE FLOOR`` panel separates total Y variance into between-
+   variant (epistemic) and within-variant (aleatoric, from
+   ``lineage_seed`` replicates) components — color-coded by signal
+   fraction.  Reports "not estimable" when ``n_init_sims = 1``.
+8. A ``QuantifyResult`` is exported to ``./uq_results/`` as a dashboard
    schema, per-strategy Sobol ``.npy`` files, and the two PCE surrogates
    (population + growth-stratified).
+
+Sizing a run with ``uq plan``
+-----------------------------
+
+Before launching a vEcoli batch, ``uq plan`` checks whether a compute
+budget is enough for a stable PCE fit at the order you plan to use:
+
+.. code-block:: bash
+
+   uv run uq plan --budget 1000 \
+       --params 6 --polynomial-order 2 \
+       --noise-replicates 4 --generations 4
+
+Pure arithmetic — no simData required.  Prints a recommended
+``(n_samples, n_init_sims, generations)`` allocation plus 1–2
+alternatives showing the trade-off (halve generations → more PCE
+samples; drop to one replicate → maximum samples but no noise-floor
+estimability).  Each row reports the adequacy ratio ``N / basis_size``
+and a status: ``ok`` / ``marginal`` / ``underdetermined``.
+
+Bring your own variants
+-----------------------
+
+If you already have a vEcoli config JSON with a fully-spec'd ``variants``
+block — a previously-curated sweep, a multi-condition design, the output
+of an Atlantis run — you can hand it to ``uq sample`` directly and have
+UQ run *those* variants instead of generating new ones from a parameter
+file:
+
+.. code-block:: bash
+
+   uv run uq sample /path/to/simData.cPickle \
+       --variants-source base-config \
+       --base-config examples/vecoli_configs/mec.json \
+       --params-file examples/uq_artifacts/params/params_demo.json \
+       --cache-dir ./uq_cache_mec \
+       --generations 4 --n-init-sims 2
+
+Under ``--variants-source base-config``:
+
+1. ``_load_variants_from_base_config()`` reads the ``variants`` block
+   from the JSON.  Must be the ``sim_data_setattr`` module (other modules
+   carry no scalar mutation values to reverse-map).
+2. ``_x_from_variants()`` walks the mutation list and reconstructs the
+   ``X`` matrix column-ordered by ``--params-file``'s ``attr_path`` list.
+   Every mutation entry must contain every spec's ``attr_path`` —
+   missing-key and index mismatches raise clear errors.
+3. PCRV sampling is **skipped**; ``germ_train`` is computed via affine
+   inverse of the input PCRV map.  ``n_samples`` is forced to the
+   variants-list length.  ``--n-test`` is ignored (held-out validation
+   requires PCRV sampling).
+4. A **PCE adequacy diagnostic** prints — red if your variants count is
+   below the PCE basis size for the default order-2 quantify run, yellow
+   if marginal, dim if comfortable.  It tells you exactly how many more
+   variants to add, what ``--polynomial-order`` to drop to at quantify
+   time, or whether ``--regression bcs`` would handle the sparsity better.
+
+Constraints (BYO is local-mode only for now):
+
+* ``--backend vecoli`` only.  ``--backend v2ecoli`` and ``--api-url``
+  reject ``--variants-source base-config`` with a clear error message;
+  remote mutation pushdown is tracked as a follow-up.
+* The variants block must use ``sim_data_setattr``.  Other modules
+  (e.g. ``condition``, ``flux_kinetics``) skip the reverse-map and
+  can't drive a meaningful ``quantify`` run.
+
+Stage 2 (``uq quantify``) is identical to the default path — the cache
+format is unchanged.
 
 Remote execution via SMS-API
 ---------------------------

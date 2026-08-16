@@ -106,6 +106,48 @@ uv run uq quantify /path/to/simData.cPickle \
    terminal report ranking Sobol indices per strategy.
 6. Exports a dashboard-ready artifact directory under `./uq_results/`.
 
+### Bring your own variants (BYO mode)
+
+If you already have a vEcoli config JSON with a fully-spec'd `variants`
+block — a multi-condition sweep, a hand-curated kinetic-feature scan, the
+output of a previous Atlantis/vEcoli design — you can run **exactly those
+variants** through the UQ pipeline instead of having UQ generate samples
+from a parameter file:
+
+```bash
+uv run uq sample /path/to/simData.cPickle \
+    --variants-source base-config \
+    --base-config examples/vecoli_configs/mec.json \
+    --params-file examples/uq_artifacts/params/params_demo.json \
+    --cache-dir ./uq_cache_mec \
+    --generations 4 --n-init-sims 2
+```
+
+Under `--variants-source base-config`:
+
+- vEcoli runs *exactly* the variants in `mec.json` (no PCRV sampling).
+- `n_samples` is forced to the length of the variants list.
+- The cache's `X` is reverse-mapped from the mutation values, column-ordered
+  by `--params-file`'s `attr_path` list — so `uq quantify` regresses `Y`
+  against the perturbations vEcoli actually applied.
+- A PCE-adequacy diagnostic prints in red/yellow/dim depending on whether
+  your variants count is enough to fit a stable order-2 PCE (basis size
+  `C(p+d, d)`). It tells you exactly how many more samples to add, or what
+  to drop `--polynomial-order` to at quantify time.
+
+Constraints (local mode only for now):
+
+- `--backend vecoli` only — `v2ecoli` and `--api-url` paths reject BYO mode
+  with a clear error (remote mutation pushdown is tracked separately).
+- The base-config `variants` block must use `sim_data_setattr`. Other
+  variant modules can't be reverse-mapped into `X` (no scalar values to
+  extract); use the default `--variants-source params-file` path for those.
+
+The override guard that makes this work is itself useful in default mode:
+if you pass `--base-config foo.json` whose top-level has its own `variants`
+key, that block is now preserved verbatim instead of being clobbered by the
+auto-generated `sim_data_setattr` block.
+
 ### Remote execution via SMS-API
 
 If you don't have a local vEcoli checkout, sampling can run against
@@ -142,11 +184,87 @@ uv run uq quantify /path/to/simData.cPickle
 # Auto-detects multi-condition cache → prints cross-condition comparison
 ```
 
+### Generating a `--params-file`  (`uq create mutations`)
+
+`uq sample` consumes a `--params-file` describing which `sim_data`
+attributes to perturb. To generate one from a baseline `simData.cPickle`:
+
+```bash
+uv run uq create mutations /path/to/simData.cPickle \
+    --output ./my_params.json
+```
+
+By default this writes the canonical `DEFAULT_SIM_DATA_PARAMETERS` (six
+vEcoli physiological knobs with literature-informed bounds). For custom
+schemes — `±X% around baseline`, hand-curated literature ranges, your
+own selection logic — pass `--perturbation-scheme <PATH|MODULE>` pointing
+at a Python file or dotted module that exposes either a static
+`PARAMETERS` list or a `build_parameters(sim_data, n_samples=0, seed=42)`
+function. See `docs/cli_reference.rst` for the full contract and bundled
+example schemes under `examples/perturbation_schemes/`.
+
+**Honest disclaimer**: the shipped default is *domain-pragmatic* (vEcoli
+physiology), not *methodology-canonical*. PyTUQ and forward-UQ literature
+constrain only the form of the prior (uniform on bounded interval) and
+are silent on bounds selection. The bundled
+`pct_around_baseline.py` scheme is the methodology-agnostic alternative.
+
+### Sizing a run before you commit compute  (`uq plan`)
+
+Before launching a vEcoli batch, ask the framework whether your compute
+budget is enough for a stable PCE fit at the order you plan to use:
+
+```bash
+uv run uq plan --budget 1000 \
+    --params 6 --polynomial-order 2 \
+    --noise-replicates 4 --generations 4
+```
+
+Output is a small table of `(n_samples, n_init_sims, generations)` allocations
+ranked by PCE adequacy ratio, with the recommended row first plus two
+alternatives showing the trade-off (halve generations → more samples; drop
+to 1 replicate → maximum samples but no noise-floor estimability). Each row
+reports `status ∈ {ok, marginal, underdetermined}` at the requested
+`--polynomial-order` and whether the noise floor (aleatoric variance) will
+be estimable from the resulting cache. Pure arithmetic; no model fits.
+
+### Honest UQ — surrogate quality, Sobol CIs, and the noise floor
+
+`uq quantify` reports four diagnostics alongside Sobol indices so you can
+interpret the numbers honestly:
+
+```bash
+uv run uq quantify /path/to/simData.cPickle \
+    --cache-dir ./uq_cache --export-path ./uq_results \
+    --polynomial-order 2 --bootstrap 200
+```
+
+* **DESIGN QUALITY @ order=N** — re-runs the count + κ(A) check at the
+  *actual* `--polynomial-order` used in this quantify run. Catches the case
+  where the sample-time check at order 2 was `ok` but `--polynomial-order
+  3` silently turned the basis underdetermined.
+* **SURROGATE QUALITY** — per-output train + test relative errors, plus a
+  `CV (5-fold)` column when no held-out test set is in the cache (BYO
+  mode, or default with `--n-test 0`). Skipped when N is too small to
+  honestly leave a fold out.
+* **NOISE FLOOR // ALEATORIC vs EPISTEMIC** — ANOVA-style separation of
+  total Y variance into between-variant (epistemic, PCE-explainable) and
+  within-variant (aleatoric, irreducible) components, using vEcoli's
+  `lineage_seed` replicate structure. When `n_init_sims = 1` (the default),
+  prints a "not estimable — rerun with `--n-init-sims 4`" advisory.
+* **`--bootstrap N`** (default 0 = off) — standard non-parametric Sobol
+  bootstrap: resample (X, Y) rows → refit PCE → recompute Sobol indices →
+  report empirical 95% CIs. Sobol tables grow from `S_Ti` to
+  `S_Ti  [low, high]`. Typical N = 200. Lets you tell whether
+  `S_Ti = 0.42` and `S_Ti = 0.38` for two parameters are meaningfully
+  different.
+
 ### Other clients
 
 All clients wrap the same two-stage workflow — pick your surface:
 
 ```bash
+uv run uq plan --budget 1000                      # size a run before sampling
 uv run uq report                                  # self-contained HTML report (auto-generated by quantify)
 uv run uq show-config /path/to/simData.cPickle    # preview the vEcoli config JSON
 uv run uq tui                                     # Textual terminal dashboard with live progress
