@@ -504,6 +504,78 @@ def collect_observables(
     )
 
 
+def collect_baseline_observables(
+    history_base: Path,
+    presets: list[str] | None = None,
+    generation_lower_bound: int = 0,
+) -> tuple[np.ndarray, list[str], np.ndarray, dict[str, np.ndarray]]:
+    """Extract variant=0 (baseline) observables for Q1 variance decomposition.
+
+    Unlike ``collect_observables`` (which collects variants 1..N), this
+    collects the single baseline variant with its full per-timestep
+    generation/seed structure — needed for σ² budget computation.
+
+    Returns:
+        ``(Y_agg, observable_names, Y_timeseries, Y_meta)``
+
+        - ``Y_agg``: time-averaged baseline, shape ``(n_obs,)``.
+        - ``observable_names``: feature labels.
+        - ``Y_timeseries``: raw array, shape ``(n_timesteps, n_obs)``.
+        - ``Y_meta``: dict with ``generation`` and ``lineage_seed`` arrays.
+    """
+    preset_names = presets or DEFAULT_PRESETS
+    preset_objs = []
+    for name in preset_names:
+        if name not in PRESETS:
+            raise ValueError(f"Unknown observable preset {name!r}. Available: {ALL_PRESET_NAMES}")
+        preset_objs.append(PRESETS[name])
+
+    df = _read_parquet(history_base)
+
+    # Resolve columns
+    all_cols = df.columns
+    resolved: list[tuple[ObservablePreset, list[str]]] = []
+    for p in preset_objs:
+        cols = _resolve_columns(p, all_cols)
+        resolved.append((p, cols))
+
+    # Sort and filter to variant=0
+    sort_cols = [c for c in ["variant", "lineage_seed", "generation", "time"] if c in df.columns]
+    if sort_cols:
+        df = df.sort(sort_cols)
+
+    if "variant" in df.columns:
+        df = df.filter(pl.col("variant") == 0)
+    if df.height == 0:
+        raise RuntimeError(f"No data for variant=0 (baseline) in {history_base}")
+
+    if generation_lower_bound > 0 and "generation" in df.columns:
+        df = df.filter(pl.col("generation") >= generation_lower_bound)
+
+    # Extract preset columns
+    arrays: list[np.ndarray] = []
+    names: list[str] = []
+    for preset, cols in resolved:
+        arr, n = _extract_preset(df, preset, cols)
+        if arr.shape[1] > 0:
+            arrays.append(arr)
+            names.extend(n)
+
+    if not arrays:
+        raise RuntimeError(f"No observables extracted for baseline from {history_base}")
+
+    ts = np.hstack(arrays)
+    Y_agg = ts.mean(axis=0)
+
+    meta: dict[str, np.ndarray] = {}
+    if "generation" in df.columns:
+        meta["generation"] = df["generation"].fill_null(0).to_numpy().astype(np.int64)
+    if "lineage_seed" in df.columns:
+        meta["lineage_seed"] = df["lineage_seed"].fill_null(0).to_numpy().astype(np.int64)
+
+    return Y_agg, names, ts, meta
+
+
 def list_presets() -> str:
     """Return a human-readable summary of all presets."""
     lines = []

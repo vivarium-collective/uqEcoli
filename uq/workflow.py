@@ -62,6 +62,109 @@ from libuq.sensitivity import PCESurrogate, SobolIndices
 logger = logging.getLogger(__name__)
 
 
+# ── Output-side PCA ──────────────────────────────────────────────────
+
+
+@dataclass
+class PCAReduction:
+    """Result of output-side PCA applied before PCE fitting.
+
+    Stores the transformation so results can be mapped back to
+    the original observable space.
+    """
+
+    n_components: int
+    mean: np.ndarray  # (n_obs,)
+    components: np.ndarray  # (n_components, n_obs) — loadings
+    explained_variance_ratio: np.ndarray  # (n_components,)
+    original_names: list[str]
+
+    def top_loadings(self, pc_index: int, n: int = 10) -> list[tuple[str, float]]:
+        """Return top-N observables by absolute loading for a given PC."""
+        loadings = self.components[pc_index]
+        indices = np.argsort(np.abs(loadings))[::-1][:n]
+        return [(self.original_names[i], float(loadings[i])) for i in indices]
+
+    def export(self, export_dir: str | Path) -> Path:
+        """Write PCA artifacts to disk."""
+        import json
+
+        out = Path(export_dir)
+        pca_dir = out / "pca"
+        pca_dir.mkdir(parents=True, exist_ok=True)
+
+        # Spec-compliant names (B2)
+        np.save(pca_dir / "pca_loadings.npy", self.components)
+        np.save(pca_dir / "pca_explained_variance.npy", self.explained_variance_ratio)
+        np.save(pca_dir / "mean.npy", self.mean)
+
+        # Backward-compatible aliases
+        np.save(pca_dir / "components.npy", self.components)
+        np.save(pca_dir / "explained_variance_ratio.npy", self.explained_variance_ratio)
+
+        # Top loadings per PC as JSON for the report
+        top_loadings_data = {}
+        for k in range(self.n_components):
+            top_loadings_data[f"PC{k + 1}"] = {
+                "explained_variance_pct": round(float(self.explained_variance_ratio[k]) * 100, 2),
+                "top_loadings": [{"observable": name, "loading": round(val, 4)} for name, val in self.top_loadings(k)],
+            }
+        (pca_dir / "pca_top_loadings.json").write_text(json.dumps(top_loadings_data, indent=2))
+        # Backward-compatible alias
+        (pca_dir / "pca_summary.json").write_text(json.dumps(top_loadings_data, indent=2))
+        return pca_dir
+
+
+def apply_output_pca(
+    Y: np.ndarray,
+    n_components: int,
+    observable_names: list[str],
+) -> tuple[np.ndarray, PCAReduction]:
+    """Apply PCA to reduce high-dimensional output before PCE fitting.
+
+    Centers Y, computes truncated SVD to get top-K principal components.
+
+    Args:
+        Y: Output matrix, shape ``(n_samples, n_obs)``.
+        n_components: Number of PCs to retain.
+        observable_names: Original feature labels.
+
+    Returns:
+        ``(Y_pca, pca_info)`` where ``Y_pca`` has shape ``(n_samples, n_components)``.
+    """
+    n_samples, n_obs = Y.shape
+    n_components = min(n_components, n_samples, n_obs)
+
+    mean = Y.mean(axis=0)
+    Y_centered = Y - mean
+
+    # Truncated SVD
+    U, S, Vt = np.linalg.svd(Y_centered, full_matrices=False)
+    components = Vt[:n_components]  # (n_components, n_obs)
+    Y_pca = Y_centered @ components.T  # (n_samples, n_components)
+
+    # Explained variance ratio
+    total_var = np.sum(S**2) / (n_samples - 1)
+    explained_var = (S[:n_components] ** 2) / (n_samples - 1)
+    explained_ratio = explained_var / total_var if total_var > 0 else np.zeros(n_components)
+
+    logger.info(
+        "PCA: %d → %d components (%.1f%% variance explained)",
+        n_obs,
+        n_components,
+        explained_ratio.sum() * 100,
+    )
+
+    pca = PCAReduction(
+        n_components=n_components,
+        mean=mean,
+        components=components,
+        explained_variance_ratio=explained_ratio,
+        original_names=observable_names,
+    )
+    return Y_pca, pca
+
+
 # ── Result container ────────────────────────────────────────────────
 
 
@@ -1173,6 +1276,174 @@ def _bin_by_growth_stage(
     return np.clip(np.digitize(theta, edges) - 1, 0, n_bins - 1)  # type: ignore[no-any-return]
 
 
+# ── Q1: Baseline variance accounting (no perturbation) ────────────
+
+
+@dataclass
+class VarianceBudget:
+    """Q1 variance-components decomposition per observable.
+
+    At fixed baseline sim_data (no input perturbation), decomposes the
+    intrinsic variance in observables across stochastic seed, generation,
+    and cell-cycle stage.  This is the "prediction confidence" deliverable
+    of MS 08.4.2 — the denominator that anchors any Q2 Sobol number.
+
+    All arrays have shape ``(n_obs,)``.
+    """
+
+    observable_names: list[str]
+    total_variance: np.ndarray
+    generation_variance: np.ndarray
+    seed_variance: np.ndarray
+    growth_stage_variance: np.ndarray
+    residual_variance: np.ndarray
+    generation_fraction: np.ndarray
+    seed_fraction: np.ndarray
+    growth_stage_fraction: np.ndarray
+    residual_fraction: np.ndarray
+    n_generations: int
+    n_seeds: int
+    n_stages: int
+
+    def export(self, export_dir: str | Path) -> Path:
+        """Write ``variance_budget.json`` to *export_dir*."""
+        import json
+
+        out = Path(export_dir)
+        out.mkdir(parents=True, exist_ok=True)
+
+        per_obs: dict[str, dict[str, float]] = {}
+        for i, name in enumerate(self.observable_names):
+            per_obs[name] = {
+                "total_variance": float(self.total_variance[i]),
+                "generation_variance": float(self.generation_variance[i]),
+                "seed_variance": float(self.seed_variance[i]),
+                "growth_stage_variance": float(self.growth_stage_variance[i]),
+                "residual_variance": float(self.residual_variance[i]),
+                "generation_fraction": float(self.generation_fraction[i]),
+                "seed_fraction": float(self.seed_fraction[i]),
+                "growth_stage_fraction": float(self.growth_stage_fraction[i]),
+                "residual_fraction": float(self.residual_fraction[i]),
+            }
+
+        data = {
+            "mode": "baseline",
+            "n_generations": self.n_generations,
+            "n_seeds": self.n_seeds,
+            "n_stages": self.n_stages,
+            "observable_names": self.observable_names,
+            "per_observable": per_obs,
+        }
+        path = out / "variance_budget.json"
+        path.write_text(json.dumps(data, indent=2))
+        return path
+
+
+def compute_variance_budget(
+    timeseries: np.ndarray,
+    meta: dict[str, np.ndarray],
+    observable_names: list[str],
+    n_bins: int = 10,
+    mass_col_index: int = 0,
+) -> VarianceBudget:
+    """Q1 baseline variance decomposition — no surrogate fit.
+
+    Decomposes the total variance of each observable into four additive
+    components using between-group-means variance:
+
+        σ²_gen   = Var(per-generation means)
+        σ²_seed  = Var(per-seed means)
+        σ²_θ     = Var(per-growth-stage means)
+        σ²_resid = σ²_total − σ²_gen − σ²_seed − σ²_θ
+
+    Args:
+        timeseries: Raw output array, shape ``(n_timesteps, n_obs)``.
+        meta: Dict with ``'generation'`` and ``'lineage_seed'`` arrays,
+            each shape ``(n_timesteps,)``.
+        observable_names: Feature labels, length ``n_obs``.
+        n_bins: Number of growth-progress bins (θ stages).
+        mass_col_index: Column index of dry mass for θ computation.
+
+    Returns:
+        VarianceBudget with per-observable variance partition.
+    """
+    n_obs = timeseries.shape[1]
+    total_var = np.var(timeseries, axis=0, ddof=0)
+
+    # ── Between-generation variance ──
+    gen_arr = meta.get("generation")
+    if gen_arr is not None:
+        gens = np.unique(gen_arr)
+        gen_means = np.array([timeseries[gen_arr == g].mean(axis=0) for g in gens])
+        gen_var = np.var(gen_means, axis=0, ddof=0)
+        n_generations = len(gens)
+    else:
+        gen_var = np.zeros(n_obs)
+        n_generations = 0
+
+    # ── Between-seed variance ──
+    seed_arr = meta.get("lineage_seed")
+    if seed_arr is not None:
+        seeds = np.unique(seed_arr)
+        seed_means = np.array([timeseries[seed_arr == s].mean(axis=0) for s in seeds])
+        seed_var = np.var(seed_means, axis=0, ddof=0)
+        n_seeds = len(seeds)
+    else:
+        seed_var = np.zeros(n_obs)
+        n_seeds = 0
+
+    # ── Between-growth-stage variance ──
+    theta = _compute_growth_fraction(timeseries, mass_col_index)
+    bins = _bin_by_growth_stage(theta, n_bins)
+    stage_means_list = []
+    for s in range(n_bins):
+        mask = bins == s
+        if np.any(mask):
+            stage_means_list.append(timeseries[mask].mean(axis=0))
+    if stage_means_list:
+        stage_means = np.array(stage_means_list)
+        stage_var = np.var(stage_means, axis=0, ddof=0)
+    else:
+        stage_var = np.zeros(n_obs)
+
+    # ── Proportional allocation ──
+    # Generation, seed, and growth stage are non-nested factors whose
+    # between-group variances can overlap (sum > total).  We compute
+    # η² = SS_between / SS_total for each, then normalize if the sum
+    # exceeds 1 so that fractions are always additive.
+    safe_total = np.where(total_var > 0, total_var, 1.0)
+    raw_gen = gen_var / safe_total
+    raw_seed = seed_var / safe_total
+    raw_stage = stage_var / safe_total
+    raw_sum = raw_gen + raw_seed + raw_stage
+
+    # If raw fractions sum > 1, scale proportionally
+    needs_rescale = raw_sum > 1.0
+    scale = np.where(needs_rescale, 1.0 / np.maximum(raw_sum, 1e-10), 1.0)
+    gen_frac = raw_gen * scale
+    seed_frac = raw_seed * scale
+    stage_frac = raw_stage * scale
+
+    resid_frac = np.maximum(1.0 - gen_frac - seed_frac - stage_frac, 0.0)
+    residual_var = resid_frac * safe_total
+
+    return VarianceBudget(
+        observable_names=observable_names,
+        total_variance=total_var,
+        generation_variance=gen_var,
+        seed_variance=seed_var,
+        growth_stage_variance=stage_var,
+        residual_variance=residual_var,
+        generation_fraction=gen_frac,
+        seed_fraction=seed_frac,
+        growth_stage_fraction=stage_frac,
+        residual_fraction=resid_frac,
+        n_generations=n_generations,
+        n_seeds=n_seeds,
+        n_stages=n_bins,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Public two-stage API: sample() → cache → quantify()
 # ═══════════════════════════════════════════════════════════════════
@@ -1201,6 +1472,7 @@ class QuantifyResult:
     parameter_names: list[str]
     observable_names: list[str]
     cache: PrecomputedCache
+    pca_info: PCAReduction | None = None
 
     def export(self, export_dir: str | Path, cli_argv: list[str] | None = None) -> Path:
         """Write all strategy artifacts to *export_dir*.
@@ -1325,6 +1597,17 @@ class QuantifyResult:
         }
         (out / "uq_results.json").write_text(json.dumps(summary, indent=2))
 
+        # PCA artifacts (if output-side PCA was applied)
+        if self.pca_info is not None:
+            self.pca_info.export(out)
+            summary["pca"] = {
+                "n_components": self.pca_info.n_components,
+                "explained_variance_pct": [round(float(v) * 100, 2) for v in self.pca_info.explained_variance_ratio],
+                "total_explained_pct": round(float(self.pca_info.explained_variance_ratio.sum()) * 100, 2),
+            }
+            # Re-write summary with PCA info
+            (out / "uq_results.json").write_text(json.dumps(summary, indent=2))
+
         # Reproducibility manifest
         _write_manifest(out, self.cache, cli_argv=cli_argv)
 
@@ -1346,11 +1629,16 @@ def _write_manifest(
 
     def _git_sha(repo_dir: str | Path) -> str:
         try:
-            return _subprocess.check_output(
-                ["git", "rev-parse", "HEAD"],
-                cwd=str(repo_dir),
-                stderr=_subprocess.DEVNULL,
-            ).decode().strip()
+            return (
+                _subprocess
+                .check_output(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=str(repo_dir),
+                    stderr=_subprocess.DEVNULL,
+                )
+                .decode()
+                .strip()
+            )
         except Exception:
             return "unknown"
 
@@ -1371,6 +1659,7 @@ def _write_manifest(
     vecoli_sha = "unknown"
     try:
         import ecoli  # type: ignore[import-not-found]
+
         vecoli_root = Path(ecoli.__file__).resolve().parent.parent
         vecoli_sha = _git_sha(vecoli_root)
     except ImportError:
@@ -1406,6 +1695,7 @@ def _write_manifest(
     # Embed full parameter specs (attr_path, bounds, description) if available
     try:
         from libuq.pipeline.param_loader import DEFAULT_SIM_DATA_PARAMETERS
+
         param_lookup = {p.name: p for p in DEFAULT_SIM_DATA_PARAMETERS}
         specs = []
         for name in cache.parameter_names:
@@ -1441,9 +1731,7 @@ def _write_manifest(
         except Exception:
             pass
 
-    (export_dir / "manifest.json").write_text(
-        _json.dumps(manifest, indent=2, default=str)
-    )
+    (export_dir / "manifest.json").write_text(_json.dumps(manifest, indent=2, default=str))
 
 
 def _adaptive_sampling_loop(
@@ -1513,7 +1801,9 @@ def _adaptive_sampling_loop(
 
         logger.info(
             "Adaptive sampling: %d samples, mean relerr=%.4f (tol=%.4f)",
-            germ.shape[0], mean_err, tol,
+            germ.shape[0],
+            mean_err,
+            tol,
         )
 
         if mean_err <= tol or n_remaining <= 0:
@@ -1708,6 +1998,7 @@ def quantify(
     parameters: list[SimDataParameter] | None = None,
     export_path: str | Path | None = None,
     seed: int | None = 42,
+    output_pca: int | None = None,
 ) -> QuantifyResult:
     """UQPC Steps 4-5: build PC surrogates, compute Sobol indices.
 
@@ -1730,6 +2021,9 @@ def quantify(
             If None, uses ``DEFAULT_SIM_DATA_PARAMETERS``.
         export_path: If given, write all artifacts here.
         seed: Random seed for reproducibility.
+        output_pca: If set, apply PCA to reduce Y to this many components
+            before PCE fitting.  Useful for high-dimensional outputs
+            (transcriptome, proteome).  Sobol indices are per-PC.
 
     Returns:
         QuantifyResult with all 4 strategy outputs.
@@ -1807,6 +2101,32 @@ def quantify(
             "listeners__mass__growth",
         ],
     )
+
+    # ── Optional output-side PCA ──
+    pca_info: PCAReduction | None = None
+    if output_pca is not None and output_pca > 0:
+        Y, pca_info = apply_output_pca(Y, output_pca, obs)
+        obs = [f"PC{k + 1}" for k in range(pca_info.n_components)]
+        logger.info(
+            "PCA applied: %d outputs → %d PCs (%.1f%% variance)",
+            len(pca_info.original_names),
+            pca_info.n_components,
+            pca_info.explained_variance_ratio.sum() * 100,
+        )
+        # Also transform test set if present
+        if cache.Y_test is not None:
+            Y_test_centered = cache.Y_test - pca_info.mean
+            cache = PrecomputedCache(
+                cache_dir=cache.cache_dir,
+                X=cache.X,
+                Y=Y,
+                parameter_names=cache.parameter_names,
+                metadata=cache.metadata,
+                Y_timeseries=cache.Y_timeseries,
+                Y_timeseries_meta=cache.Y_timeseries_meta,
+                X_test=cache.X_test,
+                Y_test=Y_test_centered @ pca_info.components.T,
+            )
 
     # ── Step 4-5 for each strategy ──
 
@@ -1888,6 +2208,7 @@ def quantify(
         parameter_names=param_space.parameter_names,
         observable_names=obs,
         cache=cache,
+        pca_info=pca_info,
     )
 
     if export_path is not None:

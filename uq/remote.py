@@ -75,7 +75,7 @@ CD1_MODULE_MAP: dict[str, dict[str, str]] = {
     },
 }
 
-# Default analysis_options to request when submitting via the API
+# Default analysis_options to request when submitting via the API at the sms-api-stanford-test namespace
 DEFAULT_CD1_ANALYSIS_OPTIONS: dict[str, Any] = {
     "multiseed": {
         "cd1_fluxomics": {"generation_lower_bound": 5},
@@ -83,6 +83,14 @@ DEFAULT_CD1_ANALYSIS_OPTIONS: dict[str, Any] = {
         "cd1_metabolomics": {"generation_lower_bound": 5},
         "cd1_transcriptomics": {"generation_lower_bound": 5},
         "cd1_higher_order_properties": {"generation_lower_bound": 5},
+    }
+}
+
+
+# Default analysis_options to request when submitting via the API at the sms-api-rke namespace (ccam hpc)
+DEFAULT_ACADEMIC_ANALYSIS_OPTIONS: dict[str, Any] = {
+    "single": {
+        "mass_fraction_summary": {}
     }
 }
 
@@ -298,8 +306,15 @@ class SmsApiClient:
         ecoli_sources_repo_url: str | None = None,
         ecoli_sources_ref: str | None = None,
         analysis_options: dict[str, Any] | None = None,
+        variants: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """POST /api/v1/simulations — submit a vEcoli workflow.
+
+        Args:
+            variants: vEcoli variants config, e.g.
+                ``{"sim_data_setattr": {"mutations": {"value": [...]}}}``.
+                Passed in the JSON body alongside analysis_options.
+                Requires SMS-API v0.8+ (``variants`` body field support).
 
         Returns the Simulation dict (contains ``database_id``, ``experiment_id``, etc.).
         """
@@ -321,10 +336,18 @@ class SmsApiClient:
         if observables:
             items.extend(("observables", obs) for obs in observables)
 
+        body: dict[str, Any] | None = None
+        if analysis_options or variants:
+            body = {}
+            if analysis_options:
+                body["analysis_options"] = analysis_options
+            if variants:
+                body["variants"] = variants
+
         resp = self.client.post(
             "/api/v1/simulations",
             params=httpx.QueryParams(items),
-            json=analysis_options,
+            json=body,
         )
         if resp.status_code != 200:
             raise SmsApiError(resp.status_code, resp.text)

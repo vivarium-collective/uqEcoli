@@ -114,6 +114,14 @@ def sample(
         None,
         help="Git ref for ecoli-sources repo (default: main).",
     ),
+    no_perturbation: bool = typer.Option(
+        False,
+        "--no-perturbation",
+        help="Q1 baseline mode: run vEcoli at fixed baseline sim_data with no "
+        "parameter perturbations.  Uses --n-init-sims seeds × --generations "
+        "gens for variance-components decomposition (σ²_gen, σ²_seed, σ²_θ, "
+        "σ²_residual).  The resulting cache is consumed by `quantify --no-perturbation`.",
+    ),
 ) -> None:
     """UQPC Steps 1-3: sample via PCRV.sampleGerm(), run vEcoli.
 
@@ -122,6 +130,7 @@ def sample(
       REMOTE (--api-url): submit to SMS-API, poll, download cd1 analysis TSVs
 
     \b
+    Use --no-perturbation for Q1 baseline variance accounting (no PCE).
     Use --generations >= 2 to enable Strategy 2 (by-generation GSA).
     Use --n-test > 0 for held-out validation (UQPC --ntst).
     Use --observables to select cd1-style observable categories:
@@ -146,6 +155,30 @@ def sample(
     sim_data_path = str(Path(sim_data_path).resolve())
     cache_path = Path(cache_dir).resolve()
     is_remote = api_url is not None
+
+    if no_perturbation:
+        if is_remote:
+            console.print("[red]--no-perturbation requires local vEcoli execution (no --api-url).[/red]")
+            console.print("[dim]Q1 variance decomposition needs raw Parquet timeseries, not cd1 TSVs.[/dim]")
+            raise typer.Exit(1)
+        console.print(
+            f"[bold cyan]Baseline (Q1):[/bold cyan] {n_init_sims} seeds × {generations} gens, "
+            f"no parameter perturbation"
+        )
+        console.print(f"  [dim]simData: {sim_data_path}[/dim]")
+        console.print(f"  [dim]cache:   {cache_path}[/dim]")
+        _sample_baseline(
+            sim_data_path=sim_data_path,
+            cache_path=cache_path,
+            n_init_sims=n_init_sims,
+            generations=generations,
+            max_duration=max_duration,
+            observables=observables,
+            generation_lower_bound=generation_lower_bound,
+            base_config=base_config,
+            conditions=conditions,
+        )
+        return
 
     mode_label = f"[bold magenta]REMOTE → {api_url}[/bold magenta]" if is_remote else "[dim]LOCAL[/dim]"
     console.print(f"[bold cyan]Sampling:[/bold cyan] {n_samples} variants, {n_init_sims} seeds, {generations} gens  {mode_label}")
@@ -257,102 +290,95 @@ def _sample_remote(
     seed: int,
     conditions: list[str],
 ) -> None:
-    """Step 3 (remote): submit to SMS-API, poll, download cd1 TSVs, cache."""
-    import json as _json
+    """Step 3 (remote): submit ONE multi-variant sim to SMS-API, poll, download cd1 TSVs, cache.
 
+    Uses vEcoli's sim_data_setattr variant system: all N LHS samples are encoded
+    as variant mutations in a single workflow submission.  One Parca run, one
+    Nextflow workflow, N variant directories in the output.
+    """
     from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
     from libuq.sampling import PrecomputedCache
-    from uq.remote import (
-        DEFAULT_CD1_ANALYSIS_OPTIONS,
-        SmsApiClient,
-        parse_cd1_tsvs,
-        parse_cd1_tsvs_multi_variant,
-    )
+    from uq.remote import SmsApiClient, parse_cd1_tsvs_multi_variant
+    from uq.tui import _build_variants_from_samples
 
     if simulator_id is None:
         console.print("[red]--simulator-id is required with --api-url[/red]")
         raise typer.Exit(1)
 
-    # Map UQ observable presets to cd1 module names for analysis_options
-    cd1_presets = [p for p in observables if p in ("higher_order", "transcriptome", "proteome", "fluxome", "exchange_fluxes")]
-    if not cd1_presets:
-        # Default: use all cd1 modules
-        cd1_presets = ["higher_order", "transcriptome", "proteome", "fluxome", "exchange_fluxes"]
+    # ── Build analysis_options ──
+    analysis_options: dict[str, Any] = {}
+    cd1_presets: list[str] = []
+    academic_mode_engaged = "sms.cam.uchc.edu" in api_url
 
-    gen_lb = generation_lower_bound if generation_lower_bound > 0 else 5
-    from uq.remote import CD1_MODULE_MAP
+    if not academic_mode_engaged:
+        cd1_presets = [p for p in observables if p in ("higher_order", "transcriptome", "proteome", "fluxome", "exchange_fluxes")]
+        if not cd1_presets:
+            cd1_presets = ["higher_order", "transcriptome", "proteome", "fluxome", "exchange_fluxes"]
 
-    analysis_options: dict[str, Any] = {
-        "multiseed": {
+        gen_lb = generation_lower_bound if generation_lower_bound > 0 else 5
+        from uq.remote import CD1_MODULE_MAP
+
+        analysis_options["multiseed"] = {
             CD1_MODULE_MAP[preset]["module"]: {"generation_lower_bound": gen_lb}
             for preset in cd1_presets
             if preset in CD1_MODULE_MAP
         }
-    }
 
+    # ── Build sim_data_setattr variants from all LHS samples ──
     n_variants = X_all.shape[0]
-    console.print(f"[dim]Step 3: submitting {n_variants} simulations to SMS-API at {api_url}...[/dim]")
+    variants = _build_variants_from_samples(X_all, param_space._sim_data_parameters)
+    console.print(
+        f"[dim]Step 3: submitting 1 simulation with {n_variants} variants "
+        f"to SMS-API at {api_url}...[/dim]"
+    )
 
     with SmsApiClient(base_url=api_url) as client:
-        # Submit one simulation per variant sample
-        sim_ids: list[int] = []
-        for i in range(n_variants):
-            exp_id = f"uq-sample-{i}"
-            desc = f"UQ variant {i}/{n_variants}"
-            sim = client.submit_simulation(
-                simulator_id=simulator_id,
-                experiment_id=exp_id,
-                config_filename=config_filename,
-                num_generations=generations,
-                num_seeds=n_init_sims,
-                description=desc,
-                run_parca=True,
-                ecoli_sources_repo_url=ecoli_sources_repo,
-                ecoli_sources_ref=ecoli_sources_ref,
-                analysis_options=analysis_options,
-            )
-            sim_ids.append(sim["database_id"])
-            console.print(f"  [dim]Submitted variant {i} → sim {sim['database_id']}[/dim]")
+        sim = client.submit_simulation(
+            simulator_id=simulator_id,
+            experiment_id="uq-batch",
+            config_filename=config_filename,
+            num_generations=generations,
+            num_seeds=n_init_sims,
+            description=f"UQ batch: {n_variants} variants, {n_init_sims} seeds, {generations} gens",
+            run_parca=True,
+            ecoli_sources_repo_url=ecoli_sources_repo,
+            ecoli_sources_ref=ecoli_sources_ref,
+            analysis_options=analysis_options,
+            variants=variants,
+        )
+        sim_id = sim["database_id"]
+        console.print(f"  [dim]Submitted {n_variants} variants → sim {sim_id}[/dim]")
 
-        # Poll all simulations
-        console.print(f"[dim]Polling {len(sim_ids)} simulations...[/dim]")
+        # Poll single simulation
+        console.print(f"[dim]Polling simulation {sim_id}...[/dim]")
         with Progress(
             SpinnerColumn("dots", style="bold magenta"),
             TextColumn("[bold cyan]{task.description}"),
             TimeElapsedColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task(f"Waiting for {len(sim_ids)} simulations", total=len(sim_ids))
+            ptask = progress.add_task(f"Waiting for sim {sim_id}", total=None)
+            client.poll_until_complete(
+                sim_id,
+                on_status=lambda s: progress.update(ptask, description=f"sim {sim_id}: {s.get('status', '?')}"),
+            )
 
-            def _on_status(sim_id: int, status: dict[str, Any]) -> None:
-                current = status.get("status", "")
-                if current.lower() in {"completed", "failed", "cancelled"}:
-                    progress.advance(task)
-
-            client.poll_batch(sim_ids, on_status=_on_status)
-
-        # Download and parse cd1 TSVs
+        # Download and parse cd1 TSVs (one archive, N variant directories)
         console.print("[dim]Step 4: downloading cd1 analysis outputs...[/dim]")
-        Y_rows: list[np.ndarray] = []
-        obs_names: list[str] | None = None
         dl_dir = cache_path / "_remote"
         dl_dir.mkdir(parents=True, exist_ok=True)
+        output_dir = client.download_data(sim_id, dest=dl_dir / f"sim_{sim_id}")
 
-        for i, sim_id in enumerate(sim_ids):
-            dest = dl_dir / f"variant_{i}"
-            output_dir = client.download_data(sim_id, dest=dest)
-            y_row, names = parse_cd1_tsvs(output_dir, presets=cd1_presets)
-            if obs_names is None:
-                obs_names = names
-            Y_rows.append(y_row)
-            console.print(f"  [dim]variant {i}: {len(y_row)} observables from sim {sim_id}[/dim]")
-
-    if not Y_rows:
-        console.print("[red]No data collected from remote simulations.[/red]")
+    Y_all_arr, obs_names = parse_cd1_tsvs_multi_variant(
+        output_dir, n_variants=n_variants, presets=cd1_presets or None,
+    )
+    if Y_all_arr.size == 0:
+        console.print("[red]No data collected from remote simulation.[/red]")
         raise typer.Exit(1)
 
-    Y_all_arr = np.vstack(Y_rows)
+    console.print(f"  [dim]{Y_all_arr.shape[0]} variants × {Y_all_arr.shape[1]} observables[/dim]")
+
     Y_agg = Y_all_arr[:n_samples]
     Y_test_arr = Y_all_arr[n_samples:] if n_test > 0 else None
 
@@ -369,6 +395,8 @@ def _sample_remote(
             "source": "sms-api",
             "api_url": api_url,
             "simulator_id": simulator_id,
+            "sim_id": sim_id,
+            "n_variants": n_variants,
         },
         X_test=X_test,
         Y_test=Y_test_arr,
@@ -608,6 +636,183 @@ def _sample_local(
         console.print("  [dim]Metadata: generation/seed labels (strategies 2-3 enabled)[/dim]")
 
 
+# ── baseline (Q1) sampling ────────────────────────────────────────────
+
+
+def _sample_baseline(
+    *,
+    sim_data_path: str,
+    cache_path: Path,
+    n_init_sims: int,
+    generations: int,
+    max_duration: float,
+    observables: list[str],
+    generation_lower_bound: int,
+    base_config: str | None,
+    conditions: list[str],
+) -> None:
+    """Q1 baseline sampling: run vEcoli with no parameter perturbations.
+
+    Runs a single vEcoli workflow (0 variants = baseline only) with the
+    specified seeds and generations.  Saves the full timeseries from
+    variant=0 for variance-components decomposition by ``quantify --no-perturbation``.
+    """
+    import json as _json
+    import os
+    import re
+    import shutil
+    import subprocess
+    import sys
+    import time as _time
+
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+    from libuq.sampling import PrecomputedCache
+    from uq.tui import _build_config, _get_vecoli_root
+
+    batch_dir = cache_path / "_batch"
+    if batch_dir.exists():
+        shutil.rmtree(batch_dir)
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = batch_dir / "output"
+    output_dir.mkdir(exist_ok=True)
+    experiment_id = "uqpc_baseline"
+
+    # Build config with NO variants (just baseline)
+    config = _build_config(
+        sim_data_path=sim_data_path,
+        output_dir=str(output_dir),
+        variants_section={},
+        experiment_id=experiment_id,
+        n_init_sims=n_init_sims,
+        generations=generations,
+        max_duration=max_duration,
+        base_config_path=base_config,
+        conditions=conditions if conditions else None,
+    )
+    config_path = batch_dir / "workflow_config.json"
+    config_path.write_text(_json.dumps(config, indent=2))
+    console.print(f"  [dim]Config JSON: {config_path}[/dim]")
+
+    vecoli_root = _get_vecoli_root()
+    nf_temp = Path(vecoli_root) / "nextflow_temp" / experiment_id
+    if nf_temp.exists():
+        shutil.rmtree(nf_temp)
+
+    # variant=0 only, with n_init_sims seeds × generations
+    total_sims = n_init_sims * generations
+    history_base = output_dir / experiment_id / "history"
+    ansi_re = re.compile(r"\x1b\[[\d;]*[A-Za-z]|\x1b\[\d*[A-GJK]|\x07")
+
+    console.print(f"[dim]Running baseline vEcoli workflow ({total_sims} sims, 0 variants)...[/dim]")
+
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = vecoli_root + (os.pathsep + existing if existing else "")
+    env["PYTHONUNBUFFERED"] = "1"
+
+    workflow_script = os.path.join(vecoli_root, "runscripts", "workflow.py")
+    cmd = [sys.executable, workflow_script, "--config", str(config_path)]
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=vecoli_root,
+        env=env,
+    )
+
+    with Progress(
+        SpinnerColumn("dots", style="bold magenta"),
+        TextColumn("[bold cyan]{task.description:<50}"),
+        BarColumn(bar_width=30, complete_style="green", finished_style="green"),
+        TextColumn("[bold green]{task.percentage:>5.1f}%"),
+        TextColumn("[dim]|[/dim]"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        task = progress.add_task("Launching Nextflow", total=total_sims)
+        start = _time.monotonic()
+
+        while proc.poll() is None:
+            if proc.stdout is not None:
+                fd = proc.stdout.fileno()
+                try:
+                    chunk = os.read(fd, 8192)
+                except OSError:
+                    chunk = b""
+                if chunk:
+                    for raw_line in chunk.decode("utf-8", errors="replace").splitlines():
+                        clean = ansi_re.sub("", raw_line).strip()
+                        if not clean:
+                            continue
+                        low = clean.lower()
+                        if any(kw in low for kw in ["error", "fail", "exception"]):
+                            console.print(f"  [red]{clean}[/red]")
+                        elif any(kw in low for kw in ["completed at", "duration", "succeeded"]):
+                            console.print(f"  [green]{clean}[/green]")
+                        else:
+                            console.print(f"  [dim]{clean}[/dim]")
+
+            from uq.tui import _count_completed_variants
+            n_done = _count_completed_variants(history_base)
+            elapsed = int(_time.monotonic() - start)
+            progress.update(task, completed=n_done, description=f"Baseline  {n_done}/{total_sims}  [{elapsed}s]")
+            _time.sleep(0.5)
+
+    if proc.stdout is not None:
+        remaining = proc.stdout.read()
+        if remaining:
+            for raw_line in remaining.decode("utf-8", errors="replace").splitlines():
+                clean = ansi_re.sub("", raw_line).strip()
+                if clean:
+                    console.print(f"  [dim]{clean}[/dim]")
+
+    exit_code = proc.returncode
+    if exit_code != 0:
+        console.print(f"[yellow]workflow.py exited with code {exit_code}[/yellow]")
+
+    # ── Collect variant=0 (baseline) timeseries ──
+    console.print("[dim]Collecting baseline Parquet outputs...[/dim]")
+    if not history_base.exists():
+        candidates = list(output_dir.glob("*/history"))
+        if candidates:
+            history_base = candidates[0]
+
+    from uq.observables import collect_baseline_observables
+
+    Y_agg, obs_names, Y_ts, Y_meta = collect_baseline_observables(
+        history_base,
+        presets=observables,
+        generation_lower_bound=generation_lower_bound,
+    )
+
+    cache_path.mkdir(parents=True, exist_ok=True)
+    cache = PrecomputedCache(
+        cache_dir=cache_path,
+        X=np.zeros((1, 1)),  # dummy — Q1 has no input perturbation
+        Y=Y_agg.reshape(1, -1),  # single baseline mean
+        parameter_names=[],
+        metadata={
+            "mode": "baseline",
+            "observable_columns": obs_names,
+            "n_init_sims": n_init_sims,
+            "generations": generations,
+        },
+        Y_timeseries=[Y_ts] if Y_ts is not None else None,
+        Y_timeseries_meta=[Y_meta] if Y_meta else None,
+    )
+    cache.save()
+
+    console.print(
+        f"[bold green]Baseline cache saved[/bold green] "
+        f"({len(obs_names)} observables, {Y_ts.shape[0] if Y_ts is not None else 0} timesteps) "
+        f"to [cyan]{cache_path}[/cyan]"
+    )
+    console.print(f"  [dim]Run `uq quantify --no-perturbation` to compute variance budget.[/dim]")
+
+
 # ── quantify ─────────────────────────────────────────────────────────
 
 
@@ -620,10 +825,25 @@ def quantify(
     polynomial_order: int = 2,
     regression: str = "lsq",
     tol: float = typer.Option(1e-3, help="BCS sparsity tolerance (UQPC --tol, only used when --regression=bcs)"),
+    no_perturbation: bool = typer.Option(
+        False,
+        "--no-perturbation",
+        help="Q1 baseline mode: skip PCE/Sobol, compute variance-components "
+        "decomposition (σ²_gen, σ²_seed, σ²_θ, σ²_residual) from cached "
+        "baseline timeseries.  Auto-detected if cache has mode=baseline.",
+    ),
+    output_pca: int | None = typer.Option(
+        None,
+        "--output-pca",
+        help="Apply PCA to reduce high-dimensional outputs (e.g. transcriptome) "
+        "to K principal components before PCE fitting.  Sobol indices are "
+        "per-PC.  Recommended for --observables transcriptome/proteome.",
+    ),
 ) -> None:
     """UQPC Steps 4-5: fit PCE surrogates, compute Sobol (all 4 strategies).
 
     \b
+    Use --no-perturbation for Q1 baseline variance accounting (σ² budget).
     Strategy 1: Uniform (bulk) — population-averaged sensitivity
     Strategy 2: By generation — convergence control (needs generations >= 2)
     Strategy 3: By lineage seed — stochastic variance control
@@ -635,8 +855,48 @@ def quantify(
       bcs  Bayesian Compressed Sensing (sparse)
       anl  Analytical Bayesian
     """
+    import json as _json
+
+    from libuq.sampling import PrecomputedCache
     from uq.multi_condition import is_multi_condition_cache, quantify_multi_condition
     from uq.workflow import quantify as wf_quantify
+
+    # ── Auto-detect or force baseline (Q1) mode ──
+    cache = PrecomputedCache.load(Path(cache_dir))
+    is_baseline = no_perturbation or cache.metadata.get("mode") == "baseline"
+
+    if is_baseline:
+        from uq.report import generate_baseline_html_report
+        from uq.workflow import VarianceBudget, compute_variance_budget
+
+        console.print("[bold cyan]Quantify (Q1 Baseline):[/bold cyan] variance-components decomposition")
+
+        if cache.Y_timeseries is None or len(cache.Y_timeseries) == 0:
+            console.print("[red]No timeseries data in cache. Q1 requires raw timeseries.[/red]")
+            raise typer.Exit(1)
+
+        ts = cache.Y_timeseries[0]
+        meta = cache.Y_timeseries_meta[0] if cache.Y_timeseries_meta else {}
+        obs_names = cache.metadata.get("observable_columns", [])
+
+        budget = compute_variance_budget(
+            timeseries=ts,
+            meta=meta,
+            observable_names=obs_names,
+            n_bins=n_bins,
+        )
+
+        out = Path(export_path)
+        budget_path = budget.export(out)
+        console.print(f"  [green]Variance budget:[/green] {budget_path}")
+
+        # Print summary table
+        _print_variance_budget(budget)
+
+        # Generate Q1-specific HTML report
+        rpt = generate_baseline_html_report(out)
+        console.print(f"  [green]Report:[/green] {rpt}")
+        return
 
     console.print(
         f"[bold cyan]Quantify:[/bold cyan] order={polynomial_order}, bins={n_bins}, regression={regression}, tol={tol}"
@@ -676,9 +936,12 @@ def quantify(
         regression=regression,
         tolerance=tol,
         export_path=export_path,
+        output_pca=output_pca,
     )
 
     _print_report(result)
+    if result.pca_info is not None:
+        _print_pca_summary(result)
     _print_narrative(result)
     console.print(f"\n  [bold green]Artifacts exported to:[/bold green] {export_path}")
 
@@ -689,6 +952,63 @@ def quantify(
 
 
 # ── Report rendering ─────────────────────────────────────────────────
+
+
+def _print_variance_budget(budget: Any) -> None:
+    """Render VarianceBudget as a rich terminal table."""
+    table = Table(title="Variance Budget (Q1 Baseline)", box=box.SIMPLE_HEAVY)
+    table.add_column("Observable", style="cyan")
+    table.add_column("σ²_total", justify="right")
+    table.add_column("Gen %", justify="right", style="yellow")
+    table.add_column("Seed %", justify="right", style="green")
+    table.add_column("θ (stage) %", justify="right", style="magenta")
+    table.add_column("Residual %", justify="right", style="dim")
+
+    for i, name in enumerate(budget.observable_names):
+        short = name.replace("listeners__mass__", "").replace("instantaneous_growth_rate", "igr")
+        table.add_row(
+            short,
+            f"{budget.total_variance[i]:.4g}",
+            f"{budget.generation_fraction[i] * 100:.1f}%",
+            f"{budget.seed_fraction[i] * 100:.1f}%",
+            f"{budget.growth_stage_fraction[i] * 100:.1f}%",
+            f"{budget.residual_fraction[i] * 100:.1f}%",
+        )
+
+    console.print(table)
+    console.print(
+        f"  [dim]{budget.n_generations} generations, {budget.n_seeds} seeds, "
+        f"{budget.n_stages} growth stages[/dim]"
+    )
+
+
+def _print_pca_summary(result: Any) -> None:
+    """Render PCA reduction summary."""
+    pca = result.pca_info
+    if pca is None:
+        return
+
+    table = Table(title="Output PCA Summary", box=box.SIMPLE_HEAVY)
+    table.add_column("PC", style="cyan")
+    table.add_column("Variance %", justify="right")
+    table.add_column("Cumul %", justify="right")
+    table.add_column("Top Loadings", style="dim")
+
+    cum = 0.0
+    for k in range(pca.n_components):
+        pct = float(pca.explained_variance_ratio[k]) * 100
+        cum += pct
+        top3 = pca.top_loadings(k, n=3)
+        loading_str = ", ".join(
+            f"{n.replace('listeners__mass__', '')}: {v:.2f}" for n, v in top3
+        )
+        table.add_row(f"PC{k + 1}", f"{pct:.1f}%", f"{cum:.1f}%", loading_str)
+
+    console.print(table)
+    console.print(
+        f"  [dim]{pca.n_components} PCs from {len(pca.original_names)} original observables "
+        f"({cum:.1f}% variance explained)[/dim]"
+    )
 
 
 def _pct(v: float) -> str:
@@ -1028,6 +1348,23 @@ def gui() -> None:
 
     _sp.run(
         ["uv", "run", "marimo", "run", "--no-token", "app/gui.py"],  # noqa: S607
+        check=True,
+    )
+
+
+@app.command()
+def tutorial() -> None:
+    """Launch the interactive UQ tutorial (marimo).
+
+    \b
+    10-level interactive tutorial covering the complete uq CLI —
+    parameter space, sampling, PCE, Sobol, 4 strategies, advanced features,
+    and every command. Opens in the browser.
+    """
+    import subprocess as _sp
+
+    _sp.run(
+        ["uv", "run", "marimo", "run", "--no-token", "app/tutorial.py"],  # noqa: S607
         check=True,
     )
 

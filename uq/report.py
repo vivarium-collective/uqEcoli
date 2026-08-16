@@ -913,6 +913,107 @@ def _interactive_section_html(has_gs: bool) -> str:
 </div>"""
 
 
+def _pca_report_section(
+    pca_summary: dict[str, Any],
+    pca_meta: dict[str, Any] | None,
+    data: dict[str, Any],
+) -> str:
+    """Build HTML section for output-side PCA results."""
+    total_pct = pca_meta.get("total_explained_pct", 0) if pca_meta else 0
+    n_pcs = len(pca_summary)
+    params = list(data.get("parameters", {}).keys())
+
+    # Scree bar chart (simple inline SVG)
+    scree_bars = []
+    max_pct = max((pc["explained_variance_pct"] for pc in pca_summary.values()), default=1)
+    bar_w = min(80, 600 // max(n_pcs, 1))
+    svg_w = n_pcs * (bar_w + 8) + 80
+    svg_h = 200
+    for i, (pc_name, pc_data) in enumerate(pca_summary.items()):
+        pct = pc_data["explained_variance_pct"]
+        h = (pct / max(max_pct, 1)) * 140
+        x = 60 + i * (bar_w + 8)
+        y = 170 - h
+        scree_bars.append(
+            f'<rect x="{x}" y="{y:.0f}" width="{bar_w}" height="{h:.0f}" '
+            f'fill="{_COLORS[i % len(_COLORS)]}" rx="3">'
+            f'<title>{pc_name}: {pct:.1f}%</title></rect>'
+            f'<text x="{x + bar_w / 2}" y="{y - 4:.0f}" text-anchor="middle" '
+            f'font-size="10" fill="#e2e8f0">{pct:.1f}%</text>'
+            f'<text x="{x + bar_w / 2}" y="186" text-anchor="middle" '
+            f'font-size="10" fill="#94a3b8">{pc_name}</text>'
+        )
+    scree_svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {svg_w} {svg_h}" '
+        f'style="width:100%;max-width:{svg_w}px;height:auto;">'
+        f'<text x="10" y="20" font-size="12" fill="#94a3b8">Variance Explained (%)</text>'
+        + "".join(scree_bars) +
+        '</svg>'
+    )
+
+    # Per-PC Sobol + loadings table
+    pc_rows = []
+    s1 = data.get("phase1_population", {})
+    s1_total = s1.get("sobol_total_order", {})
+    for pc_name, pc_data in pca_summary.items():
+        pct = pc_data["explained_variance_pct"]
+        top_loads = pc_data.get("top_loadings", [])[:5]
+        loads_str = ", ".join(
+            f'{html.escape(_short(t["observable"]))} ({t["loading"]:.2f})'
+            for t in top_loads
+        )
+        sobol_val = s1_total.get(pc_name, "")
+        # Get the top Sobol driver for this PC
+        top_driver = ""
+        if params and pc_name in s1_total:
+            # s1_total keys are param names, not PC names — we need per-PC Sobol
+            pass
+        pc_rows.append(
+            f'<tr><td><strong>{html.escape(pc_name)}</strong></td>'
+            f'<td style="text-align:right">{pct:.1f}%</td>'
+            f'<td style="font-size:11px;color:var(--text-dim)">{loads_str}</td></tr>'
+        )
+
+    pc_table = (
+        '<table><thead><tr>'
+        '<th>Component</th><th>Variance</th><th>Top Observable Loadings</th>'
+        '</tr></thead><tbody>'
+        + '\n'.join(pc_rows) +
+        '</tbody></table>'
+    )
+
+    return f"""
+<div class="strategy-divider">Output Dimensionality Reduction</div>
+
+<div class="callout">
+  <div class="icon">&#x1F4D0;</div>
+  <div class="detail">
+    <div class="title">Output-side PCA: {n_pcs} components capture {total_pct:.1f}% of output variance</div>
+    <div class="desc">
+      High-dimensional outputs (transcriptome, proteome) were projected onto
+      {n_pcs} principal components before PCE fitting.  Sobol indices above
+      are per-PC &mdash; each PC represents a dominant axis of variation across
+      the output space.  See loadings below for biological interpretation.
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Variance Explained (Scree)</h2>
+  <div class="chart-container">{scree_svg}</div>
+</div>
+
+<div class="section">
+  <h2>PC Loadings</h2>
+  <p class="section-desc">
+    Top observable loadings for each principal component.  High-magnitude
+    loadings indicate which original observables contribute most to each PC.
+  </p>
+  <div style="overflow-x:auto;">{pc_table}</div>
+</div>
+"""
+
+
 # ── Main report generator ──
 
 
@@ -946,6 +1047,13 @@ def generate_html_report(
 
     # ── Load surrogate data for interactive explorer ──
     surr = _load_surrogate_json(results_dir)
+
+    # ── Load PCA summary (if output-side PCA was used) ──
+    pca_summary: dict[str, Any] | None = None
+    pca_summary_path = results_dir / "pca" / "pca_summary.json"
+    if pca_summary_path.exists():
+        pca_summary = json.loads(pca_summary_path.read_text())
+    pca_meta = data.get("pca")  # from uq_results.json
 
     # ── Extract structured data ──
     params = list(data["parameters"].keys())
@@ -1585,6 +1693,8 @@ details.accordion > .accordion-body {{
 </div>
 '''}
 
+{"" if not pca_summary else _pca_report_section(pca_summary, pca_meta, data)}
+
 <!-- Provenance -->
 <div class="section">
   <h2>Provenance</h2>
@@ -1615,6 +1725,342 @@ details.accordion > .accordion-body {{
     json.dumps(obs),
     n_stages,
 )}
+</body>
+</html>"""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(report_html)
+    return output_path
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Q1 Baseline Report — variance-components decomposition
+# ═══════════════════════════════════════════════════════════════════
+
+_BUDGET_COLORS = {
+    "generation": "#f59e0b",   # amber
+    "seed": "#10b981",         # emerald
+    "growth_stage": "#8b5cf6", # violet
+    "residual": "#475569",     # slate
+}
+
+
+def _svg_stacked_bars(
+    budget_data: dict[str, dict[str, float]],
+    *,
+    width: int = 700,
+    bar_height: int = 36,
+) -> str:
+    """Stacked horizontal bar chart of variance fractions per observable."""
+    obs_names = list(budget_data.keys())
+    n = len(obs_names)
+    if n == 0:
+        return ""
+
+    ml, mr, mt = 160, 20, 30
+    pw = width - ml - mr
+    total_height = mt + n * (bar_height + 6) + 60  # extra for legend
+
+    L = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {total_height}" '
+         f'style="width:100%;max-width:{width}px;height:auto;">']
+
+    components = [
+        ("generation_fraction", "Generation (σ²_gen)", _BUDGET_COLORS["generation"]),
+        ("seed_fraction", "Seed (σ²_seed)", _BUDGET_COLORS["seed"]),
+        ("growth_stage_fraction", "Cell Cycle (σ²_θ)", _BUDGET_COLORS["growth_stage"]),
+        ("residual_fraction", "Residual (σ²_resid)", _BUDGET_COLORS["residual"]),
+    ]
+
+    for i, obs in enumerate(obs_names):
+        y = mt + i * (bar_height + 6)
+        fracs = budget_data[obs]
+
+        # Label
+        short = _short(obs)
+        L.append(
+            f'<text x="{ml - 8}" y="{y + bar_height / 2 + 4}" text-anchor="end" '
+            f'font-size="12" fill="#e2e8f0">{html.escape(short)}</text>'
+        )
+
+        # Stacked segments
+        x_offset = float(ml)
+        for key, _label, color in components:
+            frac = fracs.get(key, 0.0)
+            seg_w = frac * pw
+            if seg_w > 0.5:
+                L.append(
+                    f'<rect x="{x_offset:.1f}" y="{y}" width="{seg_w:.1f}" '
+                    f'height="{bar_height}" fill="{color}" opacity="0.85">'
+                    f'<title>{_label}: {frac:.1%}</title></rect>'
+                )
+                if seg_w > 30:
+                    L.append(
+                        f'<text x="{x_offset + seg_w / 2:.1f}" y="{y + bar_height / 2 + 4}" '
+                        f'text-anchor="middle" font-size="10" fill="#fff" font-weight="600">'
+                        f'{frac:.0%}</text>'
+                    )
+            x_offset += seg_w
+
+    # Legend
+    ly = mt + n * (bar_height + 6) + 16
+    lx = ml
+    for _key, label, color in components:
+        L.append(f'<rect x="{lx}" y="{ly}" width="14" height="14" fill="{color}" rx="2" opacity="0.85"/>')
+        L.append(f'<text x="{lx + 18}" y="{ly + 11}" font-size="11" fill="#e2e8f0">{label}</text>')
+        lx += len(label) * 7 + 40
+
+    L.append('</svg>')
+    return '\n'.join(L)
+
+
+def _variance_budget_table(budget_data: dict[str, dict[str, float]]) -> str:
+    """HTML table of variance budget per observable."""
+    rows = []
+    for obs, fracs in budget_data.items():
+        rows.append(
+            f'<tr>'
+            f'<td><code>{html.escape(_short(obs))}</code></td>'
+            f'<td style="text-align:right">{fracs["total_variance"]:.4g}</td>'
+            f'<td style="text-align:right;color:{_BUDGET_COLORS["generation"]}">'
+            f'{fracs["generation_fraction"]:.1%}</td>'
+            f'<td style="text-align:right;color:{_BUDGET_COLORS["seed"]}">'
+            f'{fracs["seed_fraction"]:.1%}</td>'
+            f'<td style="text-align:right;color:{_BUDGET_COLORS["growth_stage"]}">'
+            f'{fracs["growth_stage_fraction"]:.1%}</td>'
+            f'<td style="text-align:right;color:{_BUDGET_COLORS["residual"]}">'
+            f'{fracs["residual_fraction"]:.1%}</td>'
+            f'</tr>'
+        )
+    return (
+        '<table><thead><tr>'
+        '<th>Observable</th><th>σ²_total</th>'
+        '<th>Generation</th><th>Seed</th><th>Cell Cycle</th><th>Residual</th>'
+        '</tr></thead><tbody>'
+        + '\n'.join(rows) +
+        '</tbody></table>'
+    )
+
+
+def generate_baseline_html_report(
+    results_dir: str | Path,
+    output_path: str | Path | None = None,
+) -> Path:
+    """Generate a self-contained HTML report for Q1 baseline variance budget.
+
+    Reads ``variance_budget.json`` from the export directory.
+    """
+    results_dir = Path(results_dir)
+    budget_path = results_dir / "variance_budget.json"
+    if not budget_path.exists():
+        raise FileNotFoundError(f"No variance_budget.json in {results_dir}")
+
+    data = json.loads(budget_path.read_text())
+    output_path = Path(output_path) if output_path else results_dir / "report.html"
+
+    obs_names = data.get("observable_names", [])
+    n_gens = data.get("n_generations", 0)
+    n_seeds = data.get("n_seeds", 0)
+    n_stages = data.get("n_stages", 0)
+    per_obs = data.get("per_observable", {})
+
+    # Find dominant variance source
+    dominant_sources: dict[str, str] = {}
+    for obs, fracs in per_obs.items():
+        comps = {
+            "generation": fracs.get("generation_fraction", 0),
+            "seed": fracs.get("seed_fraction", 0),
+            "cell cycle": fracs.get("growth_stage_fraction", 0),
+            "residual": fracs.get("residual_fraction", 0),
+        }
+        dominant_sources[obs] = max(comps, key=comps.get)  # type: ignore[arg-type]
+
+    stacked_svg = _svg_stacked_bars(per_obs)
+    budget_table = _variance_budget_table(per_obs)
+
+    # Narrative insight
+    most_common_source = max(
+        set(dominant_sources.values()),
+        key=list(dominant_sources.values()).count,
+    ) if dominant_sources else "unknown"
+
+    report_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Q1 Baseline Variance Report</title>
+<style>
+:root {{
+  --bg: #0f0f1a;
+  --surface: #1a1a2e;
+  --surface2: #222240;
+  --border: #2d2d50;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+  --success: #10b981;
+  --warning: #f59e0b;
+}}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}}
+.container {{ max-width: 1100px; margin: 0 auto; padding: 40px 24px; }}
+.header {{
+  text-align: center;
+  padding: 48px 0 32px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 40px;
+}}
+.header h1 {{
+  font-size: 28px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 8px;
+}}
+.header .subtitle {{ color: var(--text-dim); font-size: 14px; }}
+.metrics {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 14px; margin-bottom: 36px;
+}}
+.metric {{
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; text-align: center;
+}}
+.metric .value {{ font-size: 24px; font-weight: 700; color: var(--accent-light); }}
+.metric .label {{ font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }}
+.section {{
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 28px; margin-bottom: 20px;
+}}
+.section h2 {{ font-size: 18px; margin-bottom: 12px; }}
+.section-desc {{ color: var(--text-dim); font-size: 13px; margin-bottom: 20px; line-height: 1.7; }}
+table {{
+  width: 100%; border-collapse: collapse; font-size: 13px;
+}}
+th, td {{ padding: 10px 12px; border-bottom: 1px solid var(--border); }}
+th {{
+  text-align: left; color: var(--text-dim); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}}
+.callout {{
+  display: flex; gap: 16px; align-items: flex-start;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px; margin-bottom: 20px;
+}}
+.callout .icon {{ font-size: 24px; }}
+.callout .title {{ font-weight: 600; margin-bottom: 4px; }}
+.callout .desc {{ color: var(--text-dim); font-size: 13px; }}
+.chart-container {{ overflow-x: auto; }}
+.strategy-divider {{
+  text-align: center; color: var(--text-dim);
+  font-size: 12px; text-transform: uppercase;
+  letter-spacing: 1px; margin: 36px 0 24px;
+  display: flex; align-items: center; gap: 16px;
+}}
+.strategy-divider::before, .strategy-divider::after {{
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}}
+.footer {{
+  text-align: center; padding: 32px 0 16px;
+  color: var(--text-dim); font-size: 12px;
+  border-top: 1px solid var(--border); margin-top: 24px;
+}}
+.badge {{
+  display: inline-block; background: var(--accent); color: #fff;
+  font-size: 10px; padding: 2px 8px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <div style="display:flex;justify-content:center;margin-bottom:20px;">
+    <div style="display:inline-flex;align-items:center;gap:0;">
+      <div style="
+        border:2px solid #ff3366;
+        border-radius:50px;
+        padding:0.7rem 2rem;
+        background:linear-gradient(135deg, rgba(233,30,144,0.08), rgba(0,229,255,0.05));
+        text-align:center;
+        min-width:320px;
+      ">
+        <div style="
+          font-family:'Courier New',monospace;
+          font-weight:900;
+          font-size:1.4rem;
+          letter-spacing:0.15em;
+          background:linear-gradient(90deg, #ff3366, #00f0ff);
+          -webkit-background-clip:text;
+          -webkit-text-fill-color:transparent;
+        ">&#x1F9EC; ATLANTIS &#x1F9EC;</div>
+        <div style="
+          font-family:'Courier New',monospace;
+          font-size:0.7rem;
+          color:#00f0ff;
+          letter-spacing:0.1em;
+          margin-top:0.2rem;
+        ">whole-cell simulation platform</div>
+      </div>
+    </div>
+  </div>
+  <div style="padding:0.7rem 2rem">
+    <h1>Baseline Variance Report <span class="badge">Q1</span></h1>
+    <div class="subtitle">Variance-components decomposition at fixed baseline sim_data (no perturbation)</div>
+  </div>
+</div>
+
+<div class="metrics">
+  <div class="metric"><div class="value">{len(obs_names)}</div><div class="label">Observables</div></div>
+  <div class="metric"><div class="value">{n_gens}</div><div class="label">Generations</div></div>
+  <div class="metric"><div class="value">{n_seeds}</div><div class="label">Lineage Seeds</div></div>
+  <div class="metric"><div class="value">{n_stages}</div><div class="label">Growth Stages</div></div>
+</div>
+
+<div class="callout">
+  <div class="icon">&#x1F4CA;</div>
+  <div class="detail">
+    <div class="title">Dominant Variance Source: {most_common_source.title()}</div>
+    <div class="desc">
+      Across {len(obs_names)} tracked observables, the largest fraction of intrinsic
+      variance is most frequently attributed to <strong>{most_common_source}</strong>.
+      This is the baseline prediction confidence &mdash; the denominator that
+      anchors any forward-UQ (Q2) Sobol index.
+    </div>
+  </div>
+</div>
+
+<div class="strategy-divider">Variance Budget</div>
+
+<div class="section">
+  <h2>Variance Decomposition</h2>
+  <p class="section-desc">
+    Each bar shows how the total variance of an observable partitions across four sources:
+    <strong style="color:{_BUDGET_COLORS['generation']}">generation drift</strong> (σ²_gen),
+    <strong style="color:{_BUDGET_COLORS['seed']}">stochastic seed</strong> (σ²_seed),
+    <strong style="color:{_BUDGET_COLORS['growth_stage']}">cell cycle stage</strong> (σ²_θ), and
+    <strong style="color:{_BUDGET_COLORS['residual']}">residual</strong> (σ²_resid).
+    No parameter perturbation was applied &mdash; this is the intrinsic spread of the prediction.
+  </p>
+  <div class="chart-container">{stacked_svg}</div>
+</div>
+
+<div class="section">
+  <h2>Detailed Budget</h2>
+  <div style="overflow-x:auto;">
+    {budget_table}
+  </div>
+</div>
+
+<div class="footer">
+  Generated from {html.escape(str(results_dir.resolve()))}
+</div>
+
+</div>
 </body>
 </html>"""
 
